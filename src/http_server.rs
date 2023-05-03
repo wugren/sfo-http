@@ -1,6 +1,6 @@
 use tide::http::headers::{COOKIE, HeaderValue};
 use tide::security::{CorsMiddleware, Origin};
-use tide::{Request, Server};
+pub use tide::*;
 
 pub struct HttpServer<T> {
     app: Server<T>,
@@ -37,7 +37,7 @@ impl<T: Clone + Send + Sync + 'static> HttpServer<T> {
 
     pub async fn run(self) -> tide::Result<()> {
         let addr = format!("{}:{}", self.server_addr, self.port);
-        log::info!("start http server:{}", addr);
+        ::log::info!("start http server:{}", addr);
         self.app.listen(addr).await?;
         Ok(())
     }

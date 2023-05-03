@@ -8,6 +8,7 @@ pub enum ErrorCode {
     InvalidParam,
 }
 
+#[derive(Debug)]
 pub struct Error {
     code: ErrorCode,
     msg: String,

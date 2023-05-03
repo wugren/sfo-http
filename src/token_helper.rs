@@ -1,12 +1,9 @@
 use chrono::{DateTime, Utc};
 use jsonwebtoken::{Header, TokenData, Validation};
 use serde::{Deserialize, Serialize};
+pub use jsonwebtoken::*;
 
-pub type Algorithm = jsonwebtoken::Algorithm;
-pub type EncodingKey = jsonwebtoken::EncodingKey;
-pub type DecodingKey = jsonwebtoken::DecodingKey;
-pub type TokenResult<T> = jsonwebtoken::errors::Result<T>;
-pub type ErrorKind = jsonwebtoken::errors::ErrorKind;
+pub type TokenResult<T> = errors::Result<T>;
 
 #[derive(Serialize, Deserialize)]
 struct Payload<T> {
