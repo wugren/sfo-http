@@ -1,4 +1,3 @@
-use cyfs_base::{BuckyError, BuckyErrorCode, BuckyResult};
 use tide::http::headers::{COOKIE, HeaderValue};
 use tide::security::{CorsMiddleware, Origin};
 use tide::{Request, Server};
@@ -36,7 +35,7 @@ impl<T: Clone + Send + Sync + 'static> HttpServer<T> {
         &mut self.app
     }
 
-    pub async fn run(self) -> BuckyResult<()> {
+    pub async fn run(self) -> tide::Result<()> {
         let addr = format!("{}:{}", self.server_addr, self.port);
         log::info!("start http server:{}", addr);
         self.app.listen(addr).await?;
@@ -44,15 +43,8 @@ impl<T: Clone + Send + Sync + 'static> HttpServer<T> {
     }
 }
 
-pub fn get_param<'a, STATE>(req: &'a Request<STATE>, name: &str) -> BuckyResult<&'a str> {
-    match req.param(name) {
-        Ok(p) => {
-            Ok(p)
-        }
-        Err(_) => {
-            Err(BuckyError::new(BuckyErrorCode::InvalidParam, format!("{}", name)))
-        }
-    }
+pub fn get_param<'a, STATE>(req: &'a Request<STATE>, name: &str) -> tide::Result<&'a str> {
+    req.param(name)
 }
 
 pub fn get_cookie<'a, STATE>(req: &'a Request<STATE>, cookie_name: &str) -> Option<String> {
