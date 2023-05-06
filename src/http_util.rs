@@ -9,9 +9,10 @@ use tide::convert::{Deserialize, Serialize};
 use surf::http::{Method, Mime};
 use surf::{Request, Url};
 use surf::http::headers::CONTENT_TYPE;
-use tide::{Response, StatusCode};
+use tide::{StatusCode};
 use crate::errors::{Error, ErrorCode, Result};
 pub use json::*;
+pub use surf::*;
 
 pub struct NoCertificateVerification {}
 
@@ -158,7 +159,7 @@ pub async fn http_get_request(url: &str) -> Result<(Vec<u8>, Option<String>)> {
     Ok((tx, resp.header(CONTENT_TYPE).map(|v| v.last().to_string())))
 }
 
-pub async fn http_get_request3(url: &str) -> Result<surf::Response> {
+pub async fn http_get_request3(url: &str) -> Result<Response> {
     let req = surf::get(url);
     let mut resp = surf::Client::with_http_client(create_http_client(None, false)).send(req).await.map_err(|err| {
         let msg = format!("http connect error! url={}, err={}", url, err);
@@ -168,7 +169,7 @@ pub async fn http_get_request3(url: &str) -> Result<surf::Response> {
     Ok(resp)
 }
 
-pub async fn http_request(req: http_types::Request) -> Result<surf::Response> {
+pub async fn http_request(req: http_types::Request) -> Result<Response> {
     let url = req.url().to_string();
     let req = surf::Request::from(req);
     let mut resp = surf::Client::with_http_client(create_http_client(None, false)).send(req).await.map_err(|err| {
