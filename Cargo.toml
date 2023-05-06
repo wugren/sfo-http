@@ -1,6 +1,6 @@
 [package]
 name = "sfo-http"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2021"
 license-file = "LICENSE"
 repository = "https://github.com/wugren/sfo-http.git"
@@ -22,3 +22,4 @@ rustls = {version = "0.18", features = ["dangerous_configuration"]}
 webpki = "0.21.0"
 webpki-roots = "0.22.6"
 chrono = "0.4.24"
+json = "0.12.4"

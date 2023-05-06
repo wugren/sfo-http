@@ -178,6 +178,61 @@ pub async fn http_request(req: http_types::Request) -> Result<surf::Response> {
     Ok(resp)
 }
 
+pub async fn http_post_json(url: &str, param: json::JsonValue) -> Result<json::JsonValue> {
+    let url_obj = Url::parse(url).unwrap();
+    let host = url_obj.host().unwrap().to_string();
+
+    let mut req = Request::new(Method::Post, url_obj);
+    req.set_content_type(Mime::from("application/json"));
+    req.set_body(param.to_string());
+    let mut resp = surf::Client::with_http_client(create_http_client(None, false)).send(req).await.map_err(|err| {
+        let msg = format!("http connect error! host={}, err={}", host, err);
+        log::error!("{}", msg.as_str());
+        Error::new(ErrorCode::ConnectFailed, msg)
+    })?;
+
+    let resp_str = resp.body_string().await.map_err(|err| {
+        let msg = format!("recv body error! err={}", err);
+        log::error!("{}", msg.as_str());
+        Error::new(ErrorCode::ConnectFailed, msg)
+    })?;
+
+    json::parse(resp_str.as_str()).map_err(|err| {
+        let msg = format!("parse {} error! err={}", resp_str.as_str(), err);
+        log::error!("{}", msg.as_str());
+        Error::new(ErrorCode::InvalidData, msg)
+    })
+}
+
+
+pub async fn http_post_json2<T: for<'de> Deserialize<'de>>(url: &str, param: json::JsonValue) -> Result<T> {
+    let url_obj = Url::parse(url).unwrap();
+    let host = url_obj.host().unwrap().to_string();
+    let mut req = Request::new(Method::Post, url_obj);
+    req.set_content_type(Mime::from("application/json"));
+    req.set_body(param.to_string());
+    let mut resp = surf::Client::with_http_client(create_http_client(None, false)).send(req).await.map_err(|err| {
+        let msg = format!("http connect error! host={}, err={}", host, err);
+        log::error!("{}", msg.as_str());
+        Error::new(ErrorCode::ConnectFailed, msg)
+    })?;
+
+    let tx = resp.body_string().await.map_err(|err| {
+        let msg = format!("recv body error! err={}", err);
+        log::error!("{}", msg.as_str());
+        Error::new(ErrorCode::ConnectFailed, msg)
+    })?;
+    serde_json::from_str(tx.as_str()).map_err(|err| {
+        let msg = format!("parse {} error! err={}", tx.as_str(), err);
+        log::error!("{}", msg.as_str());
+        Error::new(ErrorCode::InvalidData, msg)
+    })
+    // resp.body_json().await.map_err(|err| {
+    //     let msg = app_msg!("recv {} error! err={}", tx, err);
+    //     log::error!("{}", msg.as_str());
+    //     Error::new(ErrorCode::ConnectFailed, msg)
+    // })
+}
 #[derive(Clone)]
 pub struct HttpClient {
     client: surf::Client,
