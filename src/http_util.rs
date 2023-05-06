@@ -11,6 +11,7 @@ use surf::{Request, Url};
 use surf::http::headers::CONTENT_TYPE;
 use tide::{Response, StatusCode};
 use crate::errors::{Error, ErrorCode, Result};
+pub use json::*;
 
 pub struct NoCertificateVerification {}
 
@@ -178,7 +179,7 @@ pub async fn http_request(req: http_types::Request) -> Result<surf::Response> {
     Ok(resp)
 }
 
-pub async fn http_post_json(url: &str, param: json::JsonValue) -> Result<json::JsonValue> {
+pub async fn http_post_json(url: &str, param: JsonValue) -> Result<JsonValue> {
     let url_obj = Url::parse(url).unwrap();
     let host = url_obj.host().unwrap().to_string();
 
@@ -205,7 +206,7 @@ pub async fn http_post_json(url: &str, param: json::JsonValue) -> Result<json::J
 }
 
 
-pub async fn http_post_json2<T: for<'de> Deserialize<'de>>(url: &str, param: json::JsonValue) -> Result<T> {
+pub async fn http_post_json2<T: for<'de> Deserialize<'de>>(url: &str, param: JsonValue) -> Result<T> {
     let url_obj = Url::parse(url).unwrap();
     let host = url_obj.host().unwrap().to_string();
     let mut req = Request::new(Method::Post, url_obj);
