@@ -1,5 +1,6 @@
 #![allow(unused)]
 
+use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
 use std::sync::Arc;
 use std::time::Duration;
@@ -8,7 +9,7 @@ use rustls::{Certificate, RootCertStore, ServerCertVerified, ServerCertVerifier}
 use tide::convert::{Deserialize, Serialize};
 use surf::http::{Method, Mime};
 use surf::{Request, Url};
-use surf::http::headers::CONTENT_TYPE;
+use surf::http::headers::{CONTENT_TYPE, HeaderName, HeaderValues, ToHeaderValues};
 use tide::{StatusCode};
 use crate::errors::{Error, ErrorCode, Result};
 pub use json::*;
@@ -235,6 +236,7 @@ pub async fn http_post_json2<T: for<'de> Deserialize<'de>>(url: &str, param: Jso
     //     Error::new(ErrorCode::ConnectFailed, msg)
     // })
 }
+
 #[derive(Clone)]
 pub struct HttpClient {
     client: surf::Client,
@@ -373,5 +375,107 @@ impl HttpClient {
             Error::new(ErrorCode::InvalidData, msg)
         })?;
         Ok((data, resp.header(CONTENT_TYPE).map(|v| v.last().to_string())))
+    }
+}
+
+pub struct HttpClientBuilder {
+    base_url: Option<Url>,
+    headers: HashMap<HeaderName, HeaderValues>,
+    http_keep_alive: bool,
+    tcp_no_delay: bool,
+    timeout: Option<Duration>,
+    max_connections_per_host: usize,
+    verify_tls: bool,
+}
+
+impl Default for HttpClientBuilder {
+    fn default() -> Self {
+        Self {
+            base_url: None,
+            headers: Default::default(),
+            http_keep_alive: true,
+            tcp_no_delay: false,
+            timeout: Some(Duration::from_secs(60)),
+            max_connections_per_host: 50,
+            verify_tls: true,
+        }
+    }
+}
+
+impl HttpClientBuilder {
+    pub fn set_base_url(mut self, base_url: &str) -> Result<Self> {
+        let base_url = if base_url.ends_with("/") {
+            base_url.to_string()
+        } else {
+            format!("{}/", base_url)
+        };
+        let url = Url::parse(base_url.as_str()).map_err(|e| {
+            Error::new(ErrorCode::InvalidParam, format!("parse {} failed {}", base_url, e))
+        })?;
+        Ok(self)
+    }
+    pub fn add_header(
+        mut self,
+        name: impl Into<HeaderName>,
+        values: impl ToHeaderValues,
+    ) -> Result<Self> {
+        self.headers
+            .insert(name.into(), values.to_header_values().map_err(|e| {
+                Error::new(ErrorCode::InvalidParam, format!("convert header value err {}", e))
+            })?.collect());
+        Ok(self)
+    }
+
+    pub fn set_http_keep_alive(mut self, keep_alive: bool) -> Self {
+        self.http_keep_alive = keep_alive;
+        self
+    }
+
+    pub fn set_tcp_no_delay(mut self, no_delay: bool) -> Self {
+        self.tcp_no_delay = no_delay;
+        self
+    }
+
+    pub fn set_timeout(mut self, timeout: Option<Duration>) -> Self {
+        self.timeout = timeout;
+        self
+    }
+
+    pub fn set_max_connections_per_host(mut self, max_connections_per_host: usize) -> Self {
+        self.max_connections_per_host = max_connections_per_host;
+        self
+    }
+
+    pub fn set_verify_tls(mut self, verify_tls: bool) -> Self {
+        self.verify_tls = verify_tls;
+        self
+    }
+
+    pub fn build(self) -> HttpClient {
+        let mut config = http_client::Config::new()
+            .set_timeout(self.timeout.clone())
+            .set_max_connections_per_host(self.max_connections_per_host.clone())
+            .set_http_keep_alive(self.http_keep_alive);
+        if !self.verify_tls {
+            config = config.set_tls_config(Some(make_config()));
+        }
+        let mut client = http_client::h1::H1Client::new();
+        {
+            use http_client::HttpClient;
+            client.set_config(config);
+        }
+
+        let mut config = surf::Config::new()
+            .set_http_keep_alive(self.http_keep_alive)
+            .set_max_connections_per_host(self.max_connections_per_host)
+            .set_timeout(self.timeout)
+            .set_http_client(client);
+        config.headers = self.headers;
+        if self.base_url.is_some() {
+            config = config.set_base_url(self.base_url.unwrap());
+        }
+        HttpClient {
+            client: config.try_into().unwrap(),
+        }
     }
 }
