@@ -1828,7 +1828,7 @@ dependencies = [
 
 [[package]]
 name = "sfo-http"
-version = "0.1.6"
+version = "0.1.11"
 dependencies = [
  "chrono",
  "governor",
