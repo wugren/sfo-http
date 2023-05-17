@@ -7,7 +7,6 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use crate::errors::{Error, ErrorCode, Result};
 pub use json::*;
-use reqwest::{Method, Request, Url};
 pub use reqwest::*;
 use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue};
 
