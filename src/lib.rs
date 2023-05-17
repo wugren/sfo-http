@@ -3,5 +3,3 @@ pub mod token_helper;
 pub mod tide_governor_middleware;
 pub mod http_util;
 pub mod errors;
-pub use surf;
-pub use http_client;

@@ -4,28 +4,12 @@ use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
 use std::sync::Arc;
 use std::time::Duration;
-use http_client::http_types;
-use tide::convert::{Deserialize, Serialize};
-use tide::{StatusCode};
+use serde::{Deserialize, Serialize};
 use crate::errors::{Error, ErrorCode, Result};
 pub use json::*;
 use reqwest::{Method, Request, Url};
 pub use reqwest::*;
-use reqwest::header::CONTENT_TYPE;
-
-fn create_http_client(max_connections: Option<usize>, skip_tls: bool) -> http_client::h1::H1Client {
-    use http_client::HttpClient;
-    let mut config = http_client::Config::new()
-        .set_timeout(Some(Duration::from_secs(30)))
-        .set_max_connections_per_host(max_connections.unwrap_or(50))
-        .set_http_keep_alive(true);
-    if skip_tls {
-        config = config.set_tls_config(Some(make_config()));
-    }
-    let mut client = http_client::h1::H1Client::new();
-    client.set_config(config);
-    client
-}
+use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue};
 
 pub async fn http_post_request(url: &str, param: Vec<u8>, content_type: Option<&str>) -> Result<(Vec<u8>, Option<String>)> {
     let mut request_builder = reqwest::Client::new().post(url);
@@ -39,82 +23,67 @@ pub async fn http_post_request(url: &str, param: Vec<u8>, content_type: Option<&
         Error::new(ErrorCode::ConnectFailed, msg)
     })?;
 
+    let header = resp.headers().get(CONTENT_TYPE);
+    let header = if header.is_some() {
+        Some(header.unwrap().to_str().map_err(|err| {
+            let msg = format!("invalid content-type {}", err);
+            log::error!("{}", msg.as_str());
+            Error::new(ErrorCode::InvalidParam, msg)
+        })?.to_string())
+    } else {
+        None
+    };
     let data = resp.bytes().await.map_err(|err| {
         let msg = format!("recv body error! err={}", err);
         log::error!("{}", msg.as_str());
         Error::new(ErrorCode::InvalidData, msg)
     })?;
-    Ok((data.to_vec(), resp.headers().get(CONTENT_TYPE).map(|v| v.last().to_string())))
+    Ok((data.to_vec(), header))
 }
 
 pub async fn http_post_request2<T: for<'de> Deserialize<'de>>(url: &str, param: Vec<u8>, content_type: Option<&str>) -> Result<T> {
-    let url_obj = Url::parse(url).unwrap();
-    let mut req = Request::new(Method::Post, url_obj);
+    let mut request_builder = reqwest::Client::new().post(url);
     if content_type.is_some() {
-        req.set_content_type(Mime::from(content_type.unwrap()));
+        request_builder = request_builder.header(CONTENT_TYPE, content_type.unwrap());
     }
-    req.set_body(param);
-    let mut resp = surf::Client::with_http_client(create_http_client(None, false)).send(req).await.map_err(|err| {
+    // req.set_body(param);
+    let mut resp = request_builder.body(param).send().await.map_err(|err| {
         let msg = format!("http connect error! host={}, err={}", url, err);
         log::error!("{}", msg.as_str());
         Error::new(ErrorCode::ConnectFailed, msg)
     })?;
 
-    let tx = resp.body_string().await.map_err(|err| {
-        let msg = format!("http connect error! host={}, err={}", url, err);
-        log::error!("{}", msg.as_str());
-        Error::new(ErrorCode::ConnectFailed, msg)
-    })?;
-    serde_json::from_str(tx.as_str()).map_err(|err| {
-        let msg = format!("recv {} error! err={}", tx, err);
+    let data = resp.json().await.map_err(|err| {
+        let msg = format!("recv body error! err={}", err);
         log::error!("{}", msg.as_str());
         Error::new(ErrorCode::InvalidData, msg)
-    })
+    })?;
+    Ok(data)
 }
 
 pub async fn http_post_request3<T: for<'de> Deserialize<'de>, P: Serialize>(url: &str, param: &P) -> Result<T> {
-    let url_obj = Url::parse(url).unwrap();
-    let mut req = Request::new(Method::Post, url_obj);
-    req.set_content_type(Mime::from("application/json"));
-    let param = serde_json::to_string(param).map_err(|e| {
-        let msg = format!("serde json encode err {}", e);
-        log::error!("{}", msg.as_str());
-        Error::new(ErrorCode::Failed, msg)
-    })?;
-    req.set_body(param);
-    let mut resp = surf::Client::with_http_client(create_http_client(None, false)).send(req).await.map_err(|err| {
+    let mut resp = reqwest::Client::new().post(url).json(param).send().await.map_err(|err| {
         let msg = format!("http connect error! host={}, err={}", url, err);
         log::error!("{}", msg.as_str());
         Error::new(ErrorCode::ConnectFailed, msg)
     })?;
 
-    let tx = resp.body_string().await.map_err(|err| {
-        let msg = format!("http connect error! host={}, err={}", url, err);
-        log::error!("{}", msg.as_str());
-        Error::new(ErrorCode::ConnectFailed, msg)
-    })?;
-    serde_json::from_str(tx.as_str()).map_err(|err| {
-        let msg = format!("recv {} error! err={}", tx, err);
+    resp.json().await.map_err(|err| {
+        let msg = format!("recv error! err={}", err);
         log::error!("{}", msg.as_str());
         Error::new(ErrorCode::InvalidData, msg)
     })
 }
 
 pub async fn http_get_request2<T: for<'de> Deserialize<'de>>(url: &str) -> Result<T> {
-    let req = surf::get(url);
-    let mut resp = surf::Client::with_http_client(create_http_client(None, false)).send(req).await.map_err(|err| {
-        let msg = format!("http connect error! url={}, err={}", url, err);
-        log::error!("{}", msg.as_str());
-        Error::new(ErrorCode::ConnectFailed, msg)
-    })?;
-
-    let tx = resp.body_string().await.map_err(|err| {
+    let resp = reqwest::Client::new().get(url).send().await.map_err(|err| {
         let msg = format!("http connect error! host={}, err={}", url, err);
         log::error!("{}", msg.as_str());
         Error::new(ErrorCode::ConnectFailed, msg)
     })?;
-    serde_json::from_str(tx.as_str()).map_err(|err| {
-        let msg = format!("recv {} error! err={}", tx, err);
+
+    resp.json().await.map_err(|err| {
+        let msg = format!("recv error! err={}", err);
         log::error!("{}", msg.as_str());
         Error::new(ErrorCode::InvalidData, msg)
     })
@@ -122,61 +91,63 @@ pub async fn http_get_request2<T: for<'de> Deserialize<'de>>(url: &str) -> Resul
 
 
 pub async fn http_get_request(url: &str) -> Result<(Vec<u8>, Option<String>)> {
-    let req = surf::get(url);
-    let mut resp = surf::Client::with_http_client(create_http_client(None, false)).send(req).await.map_err(|err| {
-        let msg = format!("http connect error! url={}, err={}", url, err);
+    let resp = reqwest::Client::new().get(url).send().await.map_err(|err| {
+        let msg = format!("http connect error! host={}, err={}", url, err);
         log::error!("{}", msg.as_str());
         Error::new(ErrorCode::ConnectFailed, msg)
     })?;
 
-    let tx = resp.body_bytes().await.map_err(|err| {
+    let header = resp.headers().get(CONTENT_TYPE);
+    let header = if header.is_some() {
+        Some(header.unwrap().to_str().map_err(|err| {
+            let msg = format!("invalid content-type {}", err);
+            log::error!("{}", msg.as_str());
+            Error::new(ErrorCode::InvalidParam, msg)
+        })?.to_string())
+    } else {
+        None
+    };
+    let data = resp.bytes().await.map_err(|err| {
         let msg = format!("recv body error! err={}", err);
         log::error!("{}", msg.as_str());
         Error::new(ErrorCode::InvalidData, msg)
     })?;
-    Ok((tx, resp.header(CONTENT_TYPE).map(|v| v.last().to_string())))
+    Ok((data.to_vec(), header))
 }
 
 pub async fn http_get_request3(url: &str) -> Result<Response> {
-    let req = surf::get(url);
-    let mut resp = surf::Client::with_http_client(create_http_client(None, false)).send(req).await.map_err(|err| {
-        let msg = format!("http connect error! url={}, err={}", url, err);
+    reqwest::Client::new().get(url).send().await.map_err(|err| {
+        let msg = format!("http connect error! host={}, err={}", url, err);
         log::error!("{}", msg.as_str());
         Error::new(ErrorCode::ConnectFailed, msg)
-    })?;
-    Ok(resp)
+    })
 }
 
-pub async fn http_request(req: http_types::Request) -> Result<Response> {
+pub async fn http_request(req: Request) -> Result<Response> {
     let url = req.url().to_string();
-    let req = surf::Request::from(req);
-    let mut resp = surf::Client::with_http_client(create_http_client(None, false)).send(req).await.map_err(|err| {
+    reqwest::Client::new().execute(req).await.map_err(|err| {
+        let msg = format!("http connect error! url={} err={}", url, err);
+        log::error!("{}", msg.as_str());
+        Error::new(ErrorCode::ConnectFailed, msg)
+    })
+}
+
+pub async fn http_post_json(url: &str, param: JsonValue) -> Result<JsonValue> {
+    let resp = reqwest::Client::new()
+        .post(url)
+        .header(CONTENT_TYPE, "application/json")
+        .body(param.to_string())
+        .send().await.map_err(|err| {
         let msg = format!("http connect error! url={} err={}", url, err);
         log::error!("{}", msg.as_str());
         Error::new(ErrorCode::ConnectFailed, msg)
     })?;
-    Ok(resp)
-}
 
-pub async fn http_post_json(url: &str, param: JsonValue) -> Result<JsonValue> {
-    let url_obj = Url::parse(url).unwrap();
-    let host = url_obj.host().unwrap().to_string();
-
-    let mut req = Request::new(Method::Post, url_obj);
-    req.set_content_type(Mime::from("application/json"));
-    req.set_body(param.to_string());
-    let mut resp = surf::Client::with_http_client(create_http_client(None, false)).send(req).await.map_err(|err| {
-        let msg = format!("http connect error! host={}, err={}", host, err);
+    let resp_str = resp.text().await.map_err(|err| {
+        let msg = format!("recv error! err={}", err);
         log::error!("{}", msg.as_str());
-        Error::new(ErrorCode::ConnectFailed, msg)
+        Error::new(ErrorCode::InvalidData, msg)
     })?;
-
-    let resp_str = resp.body_string().await.map_err(|err| {
-        let msg = format!("recv body error! err={}", err);
-        log::error!("{}", msg.as_str());
-        Error::new(ErrorCode::ConnectFailed, msg)
-    })?;
-
     json::parse(resp_str.as_str()).map_err(|err| {
         let msg = format!("parse {} error! err={}", resp_str.as_str(), err);
         log::error!("{}", msg.as_str());
@@ -186,37 +157,26 @@ pub async fn http_post_json(url: &str, param: JsonValue) -> Result<JsonValue> {
 
 
 pub async fn http_post_json2<T: for<'de> Deserialize<'de>>(url: &str, param: JsonValue) -> Result<T> {
-    let url_obj = Url::parse(url).unwrap();
-    let host = url_obj.host().unwrap().to_string();
-    let mut req = Request::new(Method::Post, url_obj);
-    req.set_content_type(Mime::from("application/json"));
-    req.set_body(param.to_string());
-    let mut resp = surf::Client::with_http_client(create_http_client(None, false)).send(req).await.map_err(|err| {
-        let msg = format!("http connect error! host={}, err={}", host, err);
+    let resp = reqwest::Client::new().post(url)
+        .header(CONTENT_TYPE, "application/json")
+        .body(param.to_string())
+        .send().await.map_err(|err| {
+        let msg = format!("http connect error! url={} err={}", url, err);
         log::error!("{}", msg.as_str());
         Error::new(ErrorCode::ConnectFailed, msg)
     })?;
 
-    let tx = resp.body_string().await.map_err(|err| {
-        let msg = format!("recv body error! err={}", err);
-        log::error!("{}", msg.as_str());
-        Error::new(ErrorCode::ConnectFailed, msg)
-    })?;
-    serde_json::from_str(tx.as_str()).map_err(|err| {
-        let msg = format!("parse {} error! err={}", tx.as_str(), err);
+    resp.json().await.map_err(|err| {
+        let msg = format!("recv error! err={}", err);
         log::error!("{}", msg.as_str());
         Error::new(ErrorCode::InvalidData, msg)
     })
-    // resp.body_json().await.map_err(|err| {
-    //     let msg = app_msg!("recv {} error! err={}", tx, err);
-    //     log::error!("{}", msg.as_str());
-    //     Error::new(ErrorCode::ConnectFailed, msg)
-    // })
 }
 
 #[derive(Clone)]
 pub struct HttpClient {
-    client: surf::Client,
+    client: reqwest::Client,
+    base_url: Option<String>,
 }
 
 impl Debug for HttpClient {
@@ -226,138 +186,154 @@ impl Debug for HttpClient {
 }
 
 impl HttpClient {
-    pub fn new(max_connections: usize, base_url: Option<&str>) -> Result<Self> {
-        let mut config = surf::Config::new()
-            .set_http_keep_alive(true)
-            .set_max_connections_per_host(max_connections)
-            .set_timeout(Some(Duration::from_secs(30)))
-            .set_http_client(create_http_client(Some(max_connections), false));
-        if base_url.is_some() {
+    pub fn new(max_connections: usize, base_url: Option<&str>) -> Self {
+        let client = reqwest::ClientBuilder::new()
+            .connect_timeout(Duration::from_secs(30))
+            .http2_keep_alive_while_idle(true)
+            .pool_max_idle_per_host(max_connections)
+            .build().unwrap();
+
+        let base_url = if base_url.is_some() {
             let base_url = base_url.unwrap();
             let base_url = if base_url.ends_with("/") {
                 base_url.to_string()
             } else {
                 format!("{}/", base_url)
             };
-            let url = Url::parse(base_url.as_str()).map_err(|e| {
-                Error::new(ErrorCode::InvalidParam, format!("parse {} failed {}", base_url, e))
-            })?;
-            config = config.set_base_url(url);
+            Some(base_url)
+        } else {
+            base_url.map(|v| v.to_string())
+        };
+
+        Self {
+            client,
+            base_url,
         }
-        Ok(Self {
-            client: config.try_into().unwrap(),
-        })
     }
 
-    pub fn new_with_no_cert_verify(max_connections: usize, base_url: Option<&str>) -> Result<Self> {
-        let mut config = surf::Config::new()
-            .set_http_keep_alive(true)
-            .set_max_connections_per_host(max_connections)
-            .set_timeout(Some(Duration::from_secs(30)))
-            .set_http_client(create_http_client(Some(max_connections), true));
-        if base_url.is_some() {
+    pub fn new_with_no_cert_verify(max_connections: usize, base_url: Option<&str>) -> Self {
+        let client = reqwest::ClientBuilder::new()
+            .connect_timeout(Duration::from_secs(30))
+            .http2_keep_alive_while_idle(true)
+            .use_rustls_tls()
+            .pool_max_idle_per_host(max_connections)
+            .danger_accept_invalid_certs(true)
+            .build().unwrap();
+
+        let base_url = if base_url.is_some() {
             let base_url = base_url.unwrap();
             let base_url = if base_url.ends_with("/") {
                 base_url.to_string()
             } else {
                 format!("{}/", base_url)
             };
-            let url = Url::parse(base_url.as_str()).map_err(|e| {
-                Error::new(ErrorCode::InvalidParam, format!("parse {} failed {}", base_url, e))
-            })?;
-            config = config.set_base_url(url);
+            Some(base_url)
+        } else {
+            base_url.map(|v| v.to_string())
+        };
+
+        Self {
+            client,
+            base_url,
         }
-        Ok(Self {
-            client: config.try_into().unwrap(),
-        })
+    }
+
+    fn get_url(&self, uri: &str) -> String {
+        if self.base_url.is_some() {
+            format!("{}{}", self.base_url.as_ref().unwrap(), uri)
+        } else {
+            uri.to_string()
+        }
     }
 
     pub async fn get_json<T: for<'de> Deserialize<'de>>(&self, uri: &str) -> Result<T> {
-        let mut resp = self.client.get(uri).await.map_err(|err| {
-            let msg = format!("http connect error! url={}, err={}", uri, err);
+        let mut resp = self.client.get(self.get_url(uri).as_str()).send().await.map_err(|err| {
+            let msg = format!("http connect error! url={}, err={}", self.get_url(uri), err);
             log::error!("{}", msg.as_str());
             Error::new(ErrorCode::ConnectFailed, msg)
         })?;
 
-        let tx = resp.body_string().await.map_err(|err| {
-            let msg = format!("http connect error! host={}, err={}", uri, err);
-            log::error!("{}", msg.as_str());
-            Error::new(ErrorCode::ConnectFailed, msg)
-        })?;
-        serde_json::from_str(tx.as_str()).map_err(|err| {
-            let msg = format!("recv {} error! err={}", tx, err);
+        resp.json().await.map_err(|err| {
+            let msg = format!("recv error! err={}", err);
             log::error!("{}", msg.as_str());
             Error::new(ErrorCode::InvalidData, msg)
         })
     }
 
     pub async fn get(&self, uri: &str) -> Result<(Vec<u8>, Option<String>)> {
-        let mut resp = self.client.get(uri).await.map_err(|err| {
-            let msg = format!("http connect error! url={}, err={}", uri, err);
+        let mut resp = self.client.get(self.get_url(uri).as_str()).send().await.map_err(|err| {
+            let msg = format!("http connect error! url={}, err={}", self.get_url(uri), err);
             log::error!("{}", msg.as_str());
             Error::new(ErrorCode::ConnectFailed, msg)
         })?;
 
-        let tx = resp.body_bytes().await.map_err(|err| {
+        let header = resp.headers().get(CONTENT_TYPE);
+        let header = if header.is_some() {
+            Some(header.unwrap().to_str().map_err(|err| {
+                let msg = format!("invalid content-type {}", err);
+                log::error!("{}", msg.as_str());
+                Error::new(ErrorCode::InvalidParam, msg)
+            })?.to_string())
+        } else {
+            None
+        };
+        let data = resp.bytes().await.map_err(|err| {
             let msg = format!("recv body error! err={}", err);
             log::error!("{}", msg.as_str());
             Error::new(ErrorCode::InvalidData, msg)
         })?;
-        Ok((tx, resp.header(CONTENT_TYPE).map(|v| v.last().to_string())))
+        Ok((data.to_vec(), header))
     }
 
     pub async fn post_json<T: for<'de> Deserialize<'de>, P: Serialize>(&self, uri: &str, param: &P) -> Result<T> {
-        let mut req = self.client.post(uri);
-
-        req = req.content_type(Mime::from("application/json"));
-        let param = serde_json::to_string(param).map_err(|e| {
-            let msg = format!("serde json encode err {}", e);
-            log::error!("{}", msg.as_str());
-            Error::new(ErrorCode::Failed, msg)
-        })?;
-        req = req.body(param);
-        let mut resp = req.await.map_err(|err| {
-            let msg = format!("http connect error! host={}, err={}", uri, err);
+        let mut resp = self.client.post(self.get_url(uri)).json(param).send().await.map_err(|err| {
+            let msg = format!("http connect error! url={}, err={}", self.get_url(uri), err);
             log::error!("{}", msg.as_str());
             Error::new(ErrorCode::ConnectFailed, msg)
         })?;
 
-        let tx = resp.body_string().await.map_err(|err| {
-            let msg = format!("http connect error! host={}, err={}", uri, err);
-            log::error!("{}", msg.as_str());
-            Error::new(ErrorCode::ConnectFailed, msg)
-        })?;
-        serde_json::from_str(tx.as_str()).map_err(|err| {
-            let msg = format!("recv {} error! err={}", tx, err);
+        resp.json().await.map_err(|err| {
+            let msg = format!("recv error! err={}", err);
             log::error!("{}", msg.as_str());
             Error::new(ErrorCode::InvalidData, msg)
         })
     }
 
     pub async fn post(&self, uri: &str, param: Vec<u8>, content_type: Option<&str>) -> Result<(Vec<u8>, Option<String>)> {
-        let mut req = self.client.post(uri);
+        let mut request_builder = self.client.post(self.get_url(uri));
         if content_type.is_some() {
-            req = req.content_type(Mime::from(content_type.unwrap()));
+            request_builder = request_builder.header(CONTENT_TYPE, content_type.unwrap());
         }
-        req = req.body(param);
-        let mut resp = req.await.map_err(|err| {
-            let msg = format!("http connect error! host={}, err={}", uri, err);
+        // req.set_body(param);
+        let mut resp = request_builder.body(param).send().await.map_err(|err| {
+            let msg = format!("http connect error! host={}, err={}", self.get_url(uri), err);
             log::error!("{}", msg.as_str());
             Error::new(ErrorCode::ConnectFailed, msg)
         })?;
 
-        let data = resp.body_bytes().await.map_err(|err| {
+        let header = resp.headers().get(CONTENT_TYPE);
+        let header = if header.is_some() {
+            Some(header.unwrap().to_str().map_err(|err| {
+                let msg = format!("invalid content-type {}", err);
+                log::error!("{}", msg.as_str());
+                Error::new(ErrorCode::InvalidParam, msg)
+            })?.to_string())
+        } else {
+            None
+        };
+
+        let data = resp.bytes().await.map_err(|err| {
             let msg = format!("recv body error! err={}", err);
             log::error!("{}", msg.as_str());
             Error::new(ErrorCode::InvalidData, msg)
         })?;
-        Ok((data, resp.header(CONTENT_TYPE).map(|v| v.last().to_string())))
+        Ok((data.to_vec(), header))
     }
 }
 
 pub struct HttpClientBuilder {
-    base_url: Option<Url>,
-    headers: HashMap<HeaderName, HeaderValues>,
+    base_url: Option<String>,
+    headers: HeaderMap<HeaderValue>,
     http_keep_alive: bool,
     tcp_no_delay: bool,
     timeout: Option<Duration>,
@@ -380,27 +356,22 @@ impl Default for HttpClientBuilder {
 }
 
 impl HttpClientBuilder {
-    pub fn set_base_url(mut self, base_url: &str) -> Result<Self> {
+    pub fn set_base_url(mut self, base_url: &str) -> Self {
         let base_url = if base_url.ends_with("/") {
             base_url.to_string()
         } else {
             format!("{}/", base_url)
         };
-        let url = Url::parse(base_url.as_str()).map_err(|e| {
-            Error::new(ErrorCode::InvalidParam, format!("parse {} failed {}", base_url, e))
-        })?;
-        self.base_url = Some(url);
-        Ok(self)
+        self.base_url = Some(base_url);
+        self
     }
     pub fn add_header(
         mut self,
         name: impl Into<HeaderName>,
-        values: impl ToHeaderValues,
+        value: impl Into<HeaderValue>,
     ) -> Result<Self> {
         self.headers
-            .insert(name.into(), values.to_header_values().map_err(|e| {
-                Error::new(ErrorCode::InvalidParam, format!("convert header value err {}", e))
-            })?.collect());
+            .insert(name.into(), value.into());
         Ok(self)
     }
 
@@ -430,30 +401,18 @@ impl HttpClientBuilder {
     }
 
     pub fn build(self) -> HttpClient {
-        let mut config = http_client::Config::new()
-            .set_timeout(self.timeout.clone())
-            .set_max_connections_per_host(self.max_connections_per_host.clone())
-            .set_http_keep_alive(self.http_keep_alive);
-        if !self.verify_tls {
-            config = config.set_tls_config(Some(make_config()));
-        }
-        let mut client = http_client::h1::H1Client::new();
-        {
-            use http_client::HttpClient;
-            client.set_config(config);
+        let mut config = reqwest::ClientBuilder::new()
+            .pool_max_idle_per_host(self.max_connections_per_host)
+            .http2_keep_alive_while_idle(self.http_keep_alive)
+            .danger_accept_invalid_certs(self.verify_tls)
+            .default_headers(self.headers);
+        if self.timeout.is_some() {
+            config = config.connect_timeout(self.timeout.unwrap())
         }
 
-        let mut config = surf::Config::new()
-            .set_http_keep_alive(self.http_keep_alive)
-            .set_max_connections_per_host(self.max_connections_per_host)
-            .set_timeout(self.timeout)
-            .set_http_client(client);
-        config.headers = self.headers;
-        if self.base_url.is_some() {
-            config = config.set_base_url(self.base_url.unwrap());
-        }
         HttpClient {
-            client: config.try_into().unwrap(),
+            client: config.build().unwrap(),
+            base_url: self.base_url,
         }
     }
 }
