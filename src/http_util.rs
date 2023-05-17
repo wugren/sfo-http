@@ -412,6 +412,7 @@ impl HttpClientBuilder {
         let url = Url::parse(base_url.as_str()).map_err(|e| {
             Error::new(ErrorCode::InvalidParam, format!("parse {} failed {}", base_url, e))
         })?;
+        self.base_url = Some(url);
         Ok(self)
     }
     pub fn add_header(
