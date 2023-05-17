@@ -5,35 +5,13 @@ use std::fmt::{Debug, Formatter};
 use std::sync::Arc;
 use std::time::Duration;
 use http_client::http_types;
-use rustls::{Certificate, RootCertStore, ServerCertVerified, ServerCertVerifier};
 use tide::convert::{Deserialize, Serialize};
-use surf::http::{Method, Mime};
-use surf::{Request, Url};
-use surf::http::headers::{CONTENT_TYPE, HeaderName, HeaderValues, ToHeaderValues};
 use tide::{StatusCode};
 use crate::errors::{Error, ErrorCode, Result};
 pub use json::*;
-pub use surf::*;
-
-pub struct NoCertificateVerification {}
-
-impl ServerCertVerifier for NoCertificateVerification {
-    fn verify_server_cert(&self,
-                          _roots: &RootCertStore,
-                          _presented_certs: &[Certificate],
-                          _dns_name: webpki::DNSNameRef,
-                          _ocsp_response: &[u8]) -> std::result::Result<ServerCertVerified, rustls::TLSError> {
-        Ok(ServerCertVerified::assertion())
-    }
-}
-
-fn make_config() -> Arc<rustls::ClientConfig> {
-    let mut config = rustls::ClientConfig::new();
-    config.dangerous()
-        .set_certificate_verifier(Arc::new(NoCertificateVerification {}));
-
-    Arc::new(config)
-}
+use reqwest::{Method, Request, Url};
+pub use reqwest::*;
+use reqwest::header::CONTENT_TYPE;
 
 fn create_http_client(max_connections: Option<usize>, skip_tls: bool) -> http_client::h1::H1Client {
     use http_client::HttpClient;
@@ -50,24 +28,23 @@ fn create_http_client(max_connections: Option<usize>, skip_tls: bool) -> http_cl
 }
 
 pub async fn http_post_request(url: &str, param: Vec<u8>, content_type: Option<&str>) -> Result<(Vec<u8>, Option<String>)> {
-    let url_obj = Url::parse(url).unwrap();
-    let mut req = Request::new(Method::Post, url_obj);
+    let mut request_builder = reqwest::Client::new().post(url);
     if content_type.is_some() {
-        req.set_content_type(Mime::from(content_type.unwrap()));
+        request_builder = request_builder.header(CONTENT_TYPE, content_type.unwrap());
     }
-    req.set_body(param);
-    let mut resp = surf::Client::with_http_client(create_http_client(None, false)).send(req).await.map_err(|err| {
+    // req.set_body(param);
+    let mut resp = request_builder.body(param).send().await.map_err(|err| {
         let msg = format!("http connect error! host={}, err={}", url, err);
         log::error!("{}", msg.as_str());
         Error::new(ErrorCode::ConnectFailed, msg)
     })?;
 
-    let data = resp.body_bytes().await.map_err(|err| {
+    let data = resp.bytes().await.map_err(|err| {
         let msg = format!("recv body error! err={}", err);
         log::error!("{}", msg.as_str());
         Error::new(ErrorCode::InvalidData, msg)
     })?;
-    Ok((data, resp.header(CONTENT_TYPE).map(|v| v.last().to_string())))
+    Ok((data.to_vec(), resp.headers().get(CONTENT_TYPE).map(|v| v.last().to_string())))
 }
 
 pub async fn http_post_request2<T: for<'de> Deserialize<'de>>(url: &str, param: Vec<u8>, content_type: Option<&str>) -> Result<T> {
