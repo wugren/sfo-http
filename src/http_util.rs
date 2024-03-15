@@ -11,7 +11,7 @@ pub use reqwest::*;
 use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue};
 
 pub async fn http_post_request(url: &str, param: Vec<u8>, content_type: Option<&str>) -> Result<(Vec<u8>, Option<String>)> {
-    let mut request_builder = reqwest::Client::new().post(url);
+    let mut request_builder = reqwest::Client::builder().no_proxy().build().unwrap().post(url);
     if content_type.is_some() {
         request_builder = request_builder.header(CONTENT_TYPE, content_type.unwrap());
     }
@@ -41,7 +41,7 @@ pub async fn http_post_request(url: &str, param: Vec<u8>, content_type: Option<&
 }
 
 pub async fn http_post_request2<T: for<'de> Deserialize<'de>>(url: &str, param: Vec<u8>, content_type: Option<&str>) -> Result<T> {
-    let mut request_builder = reqwest::Client::new().post(url);
+    let mut request_builder = reqwest::Client::builder().no_proxy().build().unwrap().post(url);
     if content_type.is_some() {
         request_builder = request_builder.header(CONTENT_TYPE, content_type.unwrap());
     }
@@ -61,7 +61,7 @@ pub async fn http_post_request2<T: for<'de> Deserialize<'de>>(url: &str, param: 
 }
 
 pub async fn http_post_request3<T: for<'de> Deserialize<'de>, P: Serialize>(url: &str, param: &P) -> Result<T> {
-    let mut resp = reqwest::Client::new().post(url).json(param).send().await.map_err(|err| {
+    let mut resp = reqwest::Client::builder().no_proxy().build().unwrap().post(url).json(param).send().await.map_err(|err| {
         let msg = format!("http connect error! host={}, err={}", url, err);
         log::error!("{}", msg.as_str());
         Error::new(ErrorCode::ConnectFailed, msg)
@@ -75,7 +75,7 @@ pub async fn http_post_request3<T: for<'de> Deserialize<'de>, P: Serialize>(url:
 }
 
 pub async fn http_get_request2<T: for<'de> Deserialize<'de>>(url: &str) -> Result<T> {
-    let resp = reqwest::Client::new().get(url).send().await.map_err(|err| {
+    let resp = reqwest::Client::builder().no_proxy().build().unwrap().get(url).send().await.map_err(|err| {
         let msg = format!("http connect error! host={}, err={}", url, err);
         log::error!("{}", msg.as_str());
         Error::new(ErrorCode::ConnectFailed, msg)
@@ -90,7 +90,7 @@ pub async fn http_get_request2<T: for<'de> Deserialize<'de>>(url: &str) -> Resul
 
 
 pub async fn http_get_request(url: &str) -> Result<(Vec<u8>, Option<String>)> {
-    let resp = reqwest::Client::new().get(url).send().await.map_err(|err| {
+    let resp = reqwest::Client::builder().no_proxy().build().unwrap().get(url).send().await.map_err(|err| {
         let msg = format!("http connect error! host={}, err={}", url, err);
         log::error!("{}", msg.as_str());
         Error::new(ErrorCode::ConnectFailed, msg)
@@ -115,7 +115,7 @@ pub async fn http_get_request(url: &str) -> Result<(Vec<u8>, Option<String>)> {
 }
 
 pub async fn http_get_request3(url: &str) -> Result<Response> {
-    reqwest::Client::new().get(url).send().await.map_err(|err| {
+    reqwest::Client::builder().no_proxy().build().unwrap().get(url).send().await.map_err(|err| {
         let msg = format!("http connect error! host={}, err={}", url, err);
         log::error!("{}", msg.as_str());
         Error::new(ErrorCode::ConnectFailed, msg)
@@ -124,7 +124,7 @@ pub async fn http_get_request3(url: &str) -> Result<Response> {
 
 pub async fn http_request(req: Request) -> Result<Response> {
     let url = req.url().to_string();
-    reqwest::Client::new().execute(req).await.map_err(|err| {
+    reqwest::Client::builder().no_proxy().build().unwrap().execute(req).await.map_err(|err| {
         let msg = format!("http connect error! url={} err={}", url, err);
         log::error!("{}", msg.as_str());
         Error::new(ErrorCode::ConnectFailed, msg)
@@ -132,7 +132,7 @@ pub async fn http_request(req: Request) -> Result<Response> {
 }
 
 pub async fn http_post_json(url: &str, param: JsonValue) -> Result<JsonValue> {
-    let resp = reqwest::Client::new()
+    let resp = reqwest::Client::builder().no_proxy().build().unwrap()
         .post(url)
         .header(CONTENT_TYPE, "application/json")
         .body(param.to_string())
@@ -156,7 +156,7 @@ pub async fn http_post_json(url: &str, param: JsonValue) -> Result<JsonValue> {
 
 
 pub async fn http_post_json2<T: for<'de> Deserialize<'de>>(url: &str, param: JsonValue) -> Result<T> {
-    let resp = reqwest::Client::new().post(url)
+    let resp = reqwest::Client::builder().no_proxy().build().unwrap().post(url)
         .header(CONTENT_TYPE, "application/json")
         .body(param.to_string())
         .send().await.map_err(|err| {
@@ -190,6 +190,7 @@ impl HttpClient {
             .connect_timeout(Duration::from_secs(30))
             .http2_keep_alive_while_idle(true)
             .pool_max_idle_per_host(max_connections)
+            .no_proxy()
             .build().unwrap();
 
         let base_url = if base_url.is_some() {
@@ -217,6 +218,7 @@ impl HttpClient {
             .use_rustls_tls()
             .pool_max_idle_per_host(max_connections)
             .danger_accept_invalid_certs(true)
+            .no_proxy()
             .build().unwrap();
 
         let base_url = if base_url.is_some() {
@@ -338,6 +340,7 @@ pub struct HttpClientBuilder {
     timeout: Option<Duration>,
     max_connections_per_host: usize,
     verify_tls: bool,
+    auto_sys_proxy: bool
 }
 
 impl Default for HttpClientBuilder {
@@ -350,6 +353,7 @@ impl Default for HttpClientBuilder {
             timeout: Some(Duration::from_secs(60)),
             max_connections_per_host: 50,
             verify_tls: true,
+            auto_sys_proxy: false,
         }
     }
 }
@@ -399,12 +403,20 @@ impl HttpClientBuilder {
         self
     }
 
+    pub fn set_auto_sys_proxy(mut self, proxy: bool) -> Self {
+        self.auto_sys_proxy = proxy;
+        self
+    }
+
     pub fn build(self) -> HttpClient {
         let mut config = reqwest::ClientBuilder::new()
             .pool_max_idle_per_host(self.max_connections_per_host)
             .http2_keep_alive_while_idle(self.http_keep_alive)
             .danger_accept_invalid_certs(self.verify_tls)
             .default_headers(self.headers);
+        if !self.auto_sys_proxy {
+            config = config.no_proxy();
+        }
         if self.timeout.is_some() {
             config = config.connect_timeout(self.timeout.unwrap())
         }
