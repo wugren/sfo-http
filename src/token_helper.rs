@@ -1,5 +1,4 @@
 use chrono::{DateTime, Utc};
-use jsonwebtoken::{Header, TokenData, Validation};
 use serde::{Deserialize, Serialize};
 pub use jsonwebtoken::*;
 

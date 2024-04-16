@@ -9,12 +9,12 @@ pub enum ErrorCode {
 }
 
 #[derive(Debug)]
-pub struct Error {
+pub struct HttpError {
     code: ErrorCode,
     msg: String,
 }
 
-impl Error {
+impl HttpError {
     pub fn new(code: impl Into<ErrorCode>, msg: impl Into<String>) -> Self {
         Self {
             code: code.into(),
@@ -31,4 +31,4 @@ impl Error {
     }
 }
 
-pub type Result<T> = std::result::Result<T, Error>;
+pub type HttpResult<T> = std::result::Result<T, HttpError>;

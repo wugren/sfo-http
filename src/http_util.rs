@@ -1,16 +1,22 @@
 #![allow(unused)]
 
+mod json {
+    pub use json::*;
+}
+
+pub use reqwest::*;
 use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
+use ::json::JsonValue;
 use serde::{Deserialize, Serialize};
-use crate::errors::{Error, ErrorCode, Result};
-pub use json::*;
-pub use reqwest::*;
+use crate::errors::{HttpError, ErrorCode, HttpResult};
+use reqwest::dns::Resolve;
 use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue};
 
-pub async fn http_post_request(url: &str, param: Vec<u8>, content_type: Option<&str>) -> Result<(Vec<u8>, Option<String>)> {
+pub async fn http_post_request(url: &str, param: Vec<u8>, content_type: Option<&str>) -> HttpResult<(Vec<u8>, Option<String>)> {
     let mut request_builder = reqwest::Client::builder().no_proxy().build().unwrap().post(url);
     if content_type.is_some() {
         request_builder = request_builder.header(CONTENT_TYPE, content_type.unwrap());
@@ -19,7 +25,7 @@ pub async fn http_post_request(url: &str, param: Vec<u8>, content_type: Option<&
     let mut resp = request_builder.body(param).send().await.map_err(|err| {
         let msg = format!("http connect error! host={}, err={}", url, err);
         log::error!("{}", msg.as_str());
-        Error::new(ErrorCode::ConnectFailed, msg)
+        HttpError::new(ErrorCode::ConnectFailed, msg)
     })?;
 
     let header = resp.headers().get(CONTENT_TYPE);
@@ -27,7 +33,7 @@ pub async fn http_post_request(url: &str, param: Vec<u8>, content_type: Option<&
         Some(header.unwrap().to_str().map_err(|err| {
             let msg = format!("invalid content-type {}", err);
             log::error!("{}", msg.as_str());
-            Error::new(ErrorCode::InvalidParam, msg)
+            HttpError::new(ErrorCode::InvalidParam, msg)
         })?.to_string())
     } else {
         None
@@ -35,12 +41,12 @@ pub async fn http_post_request(url: &str, param: Vec<u8>, content_type: Option<&
     let data = resp.bytes().await.map_err(|err| {
         let msg = format!("recv body error! err={}", err);
         log::error!("{}", msg.as_str());
-        Error::new(ErrorCode::InvalidData, msg)
+        HttpError::new(ErrorCode::InvalidData, msg)
     })?;
     Ok((data.to_vec(), header))
 }
 
-pub async fn http_post_request2<T: for<'de> Deserialize<'de>>(url: &str, param: Vec<u8>, content_type: Option<&str>) -> Result<T> {
+pub async fn http_post_request2<T: for<'de> Deserialize<'de>>(url: &str, param: Vec<u8>, content_type: Option<&str>) -> HttpResult<T> {
     let mut request_builder = reqwest::Client::builder().no_proxy().build().unwrap().post(url);
     if content_type.is_some() {
         request_builder = request_builder.header(CONTENT_TYPE, content_type.unwrap());
@@ -49,51 +55,51 @@ pub async fn http_post_request2<T: for<'de> Deserialize<'de>>(url: &str, param: 
     let mut resp = request_builder.body(param).send().await.map_err(|err| {
         let msg = format!("http connect error! host={}, err={}", url, err);
         log::error!("{}", msg.as_str());
-        Error::new(ErrorCode::ConnectFailed, msg)
+        HttpError::new(ErrorCode::ConnectFailed, msg)
     })?;
 
     let data = resp.json().await.map_err(|err| {
         let msg = format!("recv body error! err={}", err);
         log::error!("{}", msg.as_str());
-        Error::new(ErrorCode::InvalidData, msg)
+        HttpError::new(ErrorCode::InvalidData, msg)
     })?;
     Ok(data)
 }
 
-pub async fn http_post_request3<T: for<'de> Deserialize<'de>, P: Serialize>(url: &str, param: &P) -> Result<T> {
+pub async fn http_post_request3<T: for<'de> Deserialize<'de>, P: Serialize>(url: &str, param: &P) -> HttpResult<T> {
     let mut resp = reqwest::Client::builder().no_proxy().build().unwrap().post(url).json(param).send().await.map_err(|err| {
         let msg = format!("http connect error! host={}, err={}", url, err);
         log::error!("{}", msg.as_str());
-        Error::new(ErrorCode::ConnectFailed, msg)
+        HttpError::new(ErrorCode::ConnectFailed, msg)
     })?;
 
     resp.json().await.map_err(|err| {
         let msg = format!("recv error! err={}", err);
         log::error!("{}", msg.as_str());
-        Error::new(ErrorCode::InvalidData, msg)
+        HttpError::new(ErrorCode::InvalidData, msg)
     })
 }
 
-pub async fn http_get_request2<T: for<'de> Deserialize<'de>>(url: &str) -> Result<T> {
+pub async fn http_get_request2<T: for<'de> Deserialize<'de>>(url: &str) -> HttpResult<T> {
     let resp = reqwest::Client::builder().no_proxy().build().unwrap().get(url).send().await.map_err(|err| {
         let msg = format!("http connect error! host={}, err={}", url, err);
         log::error!("{}", msg.as_str());
-        Error::new(ErrorCode::ConnectFailed, msg)
+        HttpError::new(ErrorCode::ConnectFailed, msg)
     })?;
 
     resp.json().await.map_err(|err| {
         let msg = format!("recv error! err={}", err);
         log::error!("{}", msg.as_str());
-        Error::new(ErrorCode::InvalidData, msg)
+        HttpError::new(ErrorCode::InvalidData, msg)
     })
 }
 
 
-pub async fn http_get_request(url: &str) -> Result<(Vec<u8>, Option<String>)> {
+pub async fn http_get_request(url: &str) -> HttpResult<(Vec<u8>, Option<String>)> {
     let resp = reqwest::Client::builder().no_proxy().build().unwrap().get(url).send().await.map_err(|err| {
         let msg = format!("http connect error! host={}, err={}", url, err);
         log::error!("{}", msg.as_str());
-        Error::new(ErrorCode::ConnectFailed, msg)
+        HttpError::new(ErrorCode::ConnectFailed, msg)
     })?;
 
     let header = resp.headers().get(CONTENT_TYPE);
@@ -101,7 +107,7 @@ pub async fn http_get_request(url: &str) -> Result<(Vec<u8>, Option<String>)> {
         Some(header.unwrap().to_str().map_err(|err| {
             let msg = format!("invalid content-type {}", err);
             log::error!("{}", msg.as_str());
-            Error::new(ErrorCode::InvalidParam, msg)
+            HttpError::new(ErrorCode::InvalidParam, msg)
         })?.to_string())
     } else {
         None
@@ -109,29 +115,29 @@ pub async fn http_get_request(url: &str) -> Result<(Vec<u8>, Option<String>)> {
     let data = resp.bytes().await.map_err(|err| {
         let msg = format!("recv body error! err={}", err);
         log::error!("{}", msg.as_str());
-        Error::new(ErrorCode::InvalidData, msg)
+        HttpError::new(ErrorCode::InvalidData, msg)
     })?;
     Ok((data.to_vec(), header))
 }
 
-pub async fn http_get_request3(url: &str) -> Result<Response> {
+pub async fn http_get_request3(url: &str) -> HttpResult<Response> {
     reqwest::Client::builder().no_proxy().build().unwrap().get(url).send().await.map_err(|err| {
         let msg = format!("http connect error! host={}, err={}", url, err);
         log::error!("{}", msg.as_str());
-        Error::new(ErrorCode::ConnectFailed, msg)
+        HttpError::new(ErrorCode::ConnectFailed, msg)
     })
 }
 
-pub async fn http_request(req: Request) -> Result<Response> {
+pub async fn http_request(req: Request) -> HttpResult<Response> {
     let url = req.url().to_string();
     reqwest::Client::builder().no_proxy().build().unwrap().execute(req).await.map_err(|err| {
         let msg = format!("http connect error! url={} err={}", url, err);
         log::error!("{}", msg.as_str());
-        Error::new(ErrorCode::ConnectFailed, msg)
+        HttpError::new(ErrorCode::ConnectFailed, msg)
     })
 }
 
-pub async fn http_post_json(url: &str, param: JsonValue) -> Result<JsonValue> {
+pub async fn http_post_json(url: &str, param: JsonValue) -> HttpResult<JsonValue> {
     let resp = reqwest::Client::builder().no_proxy().build().unwrap()
         .post(url)
         .header(CONTENT_TYPE, "application/json")
@@ -139,36 +145,36 @@ pub async fn http_post_json(url: &str, param: JsonValue) -> Result<JsonValue> {
         .send().await.map_err(|err| {
         let msg = format!("http connect error! url={} err={}", url, err);
         log::error!("{}", msg.as_str());
-        Error::new(ErrorCode::ConnectFailed, msg)
+        HttpError::new(ErrorCode::ConnectFailed, msg)
     })?;
 
     let resp_str = resp.text().await.map_err(|err| {
         let msg = format!("recv error! err={}", err);
         log::error!("{}", msg.as_str());
-        Error::new(ErrorCode::InvalidData, msg)
+        HttpError::new(ErrorCode::InvalidData, msg)
     })?;
     json::parse(resp_str.as_str()).map_err(|err| {
         let msg = format!("parse {} error! err={}", resp_str.as_str(), err);
         log::error!("{}", msg.as_str());
-        Error::new(ErrorCode::InvalidData, msg)
+        HttpError::new(ErrorCode::InvalidData, msg)
     })
 }
 
 
-pub async fn http_post_json2<T: for<'de> Deserialize<'de>>(url: &str, param: JsonValue) -> Result<T> {
+pub async fn http_post_json2<T: for<'de> Deserialize<'de>>(url: &str, param: JsonValue) -> HttpResult<T> {
     let resp = reqwest::Client::builder().no_proxy().build().unwrap().post(url)
         .header(CONTENT_TYPE, "application/json")
         .body(param.to_string())
         .send().await.map_err(|err| {
         let msg = format!("http connect error! url={} err={}", url, err);
         log::error!("{}", msg.as_str());
-        Error::new(ErrorCode::ConnectFailed, msg)
+        HttpError::new(ErrorCode::ConnectFailed, msg)
     })?;
 
     resp.json().await.map_err(|err| {
         let msg = format!("recv error! err={}", err);
         log::error!("{}", msg.as_str());
-        Error::new(ErrorCode::InvalidData, msg)
+        HttpError::new(ErrorCode::InvalidData, msg)
     })
 }
 
@@ -247,25 +253,25 @@ impl HttpClient {
         }
     }
 
-    pub async fn get_json<T: for<'de> Deserialize<'de>>(&self, uri: &str) -> Result<T> {
+    pub async fn get_json<T: for<'de> Deserialize<'de>>(&self, uri: &str) -> HttpResult<T> {
         let mut resp = self.client.get(self.get_url(uri).as_str()).send().await.map_err(|err| {
             let msg = format!("http connect error! url={}, err={}", self.get_url(uri), err);
             log::error!("{}", msg.as_str());
-            Error::new(ErrorCode::ConnectFailed, msg)
+            HttpError::new(ErrorCode::ConnectFailed, msg)
         })?;
 
         resp.json().await.map_err(|err| {
             let msg = format!("recv error! err={}", err);
             log::error!("{}", msg.as_str());
-            Error::new(ErrorCode::InvalidData, msg)
+            HttpError::new(ErrorCode::InvalidData, msg)
         })
     }
 
-    pub async fn get(&self, uri: &str) -> Result<(Vec<u8>, Option<String>)> {
+    pub async fn get(&self, uri: &str) -> HttpResult<(Vec<u8>, Option<String>)> {
         let mut resp = self.client.get(self.get_url(uri).as_str()).send().await.map_err(|err| {
             let msg = format!("http connect error! url={}, err={}", self.get_url(uri), err);
             log::error!("{}", msg.as_str());
-            Error::new(ErrorCode::ConnectFailed, msg)
+            HttpError::new(ErrorCode::ConnectFailed, msg)
         })?;
 
         let header = resp.headers().get(CONTENT_TYPE);
@@ -273,7 +279,7 @@ impl HttpClient {
             Some(header.unwrap().to_str().map_err(|err| {
                 let msg = format!("invalid content-type {}", err);
                 log::error!("{}", msg.as_str());
-                Error::new(ErrorCode::InvalidParam, msg)
+                HttpError::new(ErrorCode::InvalidParam, msg)
             })?.to_string())
         } else {
             None
@@ -281,26 +287,26 @@ impl HttpClient {
         let data = resp.bytes().await.map_err(|err| {
             let msg = format!("recv body error! err={}", err);
             log::error!("{}", msg.as_str());
-            Error::new(ErrorCode::InvalidData, msg)
+            HttpError::new(ErrorCode::InvalidData, msg)
         })?;
         Ok((data.to_vec(), header))
     }
 
-    pub async fn post_json<T: for<'de> Deserialize<'de>, P: Serialize>(&self, uri: &str, param: &P) -> Result<T> {
+    pub async fn post_json<T: for<'de> Deserialize<'de>, P: Serialize>(&self, uri: &str, param: &P) -> HttpResult<T> {
         let mut resp = self.client.post(self.get_url(uri)).json(param).send().await.map_err(|err| {
             let msg = format!("http connect error! url={}, err={}", self.get_url(uri), err);
             log::error!("{}", msg.as_str());
-            Error::new(ErrorCode::ConnectFailed, msg)
+            HttpError::new(ErrorCode::ConnectFailed, msg)
         })?;
 
         resp.json().await.map_err(|err| {
             let msg = format!("recv error! err={}", err);
             log::error!("{}", msg.as_str());
-            Error::new(ErrorCode::InvalidData, msg)
+            HttpError::new(ErrorCode::InvalidData, msg)
         })
     }
 
-    pub async fn post(&self, uri: &str, param: Vec<u8>, content_type: Option<&str>) -> Result<(Vec<u8>, Option<String>)> {
+    pub async fn post(&self, uri: &str, param: Vec<u8>, content_type: Option<&str>) -> HttpResult<(Vec<u8>, Option<String>)> {
         let mut request_builder = self.client.post(self.get_url(uri));
         if content_type.is_some() {
             request_builder = request_builder.header(CONTENT_TYPE, content_type.unwrap());
@@ -309,7 +315,7 @@ impl HttpClient {
         let mut resp = request_builder.body(param).send().await.map_err(|err| {
             let msg = format!("http connect error! host={}, err={}", self.get_url(uri), err);
             log::error!("{}", msg.as_str());
-            Error::new(ErrorCode::ConnectFailed, msg)
+            HttpError::new(ErrorCode::ConnectFailed, msg)
         })?;
 
         let header = resp.headers().get(CONTENT_TYPE);
@@ -317,7 +323,7 @@ impl HttpClient {
             Some(header.unwrap().to_str().map_err(|err| {
                 let msg = format!("invalid content-type {}", err);
                 log::error!("{}", msg.as_str());
-                Error::new(ErrorCode::InvalidParam, msg)
+                HttpError::new(ErrorCode::InvalidParam, msg)
             })?.to_string())
         } else {
             None
@@ -326,7 +332,7 @@ impl HttpClient {
         let data = resp.bytes().await.map_err(|err| {
             let msg = format!("recv body error! err={}", err);
             log::error!("{}", msg.as_str());
-            Error::new(ErrorCode::InvalidData, msg)
+            HttpError::new(ErrorCode::InvalidData, msg)
         })?;
         Ok((data.to_vec(), header))
     }
@@ -334,26 +340,16 @@ impl HttpClient {
 
 pub struct HttpClientBuilder {
     base_url: Option<String>,
-    headers: HeaderMap<HeaderValue>,
-    http_keep_alive: bool,
-    tcp_no_delay: bool,
-    timeout: Option<Duration>,
-    max_connections_per_host: usize,
-    verify_tls: bool,
-    auto_sys_proxy: bool
+    builder: ClientBuilder,
+    headers: HeaderMap,
 }
 
 impl Default for HttpClientBuilder {
     fn default() -> Self {
         Self {
             base_url: None,
+            builder: ClientBuilder::new(),
             headers: Default::default(),
-            http_keep_alive: true,
-            tcp_no_delay: false,
-            timeout: Some(Duration::from_secs(60)),
-            max_connections_per_host: 50,
-            verify_tls: true,
-            auto_sys_proxy: false,
         }
     }
 }
@@ -372,54 +368,101 @@ impl HttpClientBuilder {
         mut self,
         name: impl Into<HeaderName>,
         value: impl Into<HeaderValue>,
-    ) -> Result<Self> {
+    ) -> HttpResult<Self> {
         self.headers
             .insert(name.into(), value.into());
         Ok(self)
     }
 
     pub fn set_http_keep_alive(mut self, keep_alive: bool) -> Self {
-        self.http_keep_alive = keep_alive;
+        self.builder = self.builder.http2_keep_alive_while_idle(keep_alive);
         self
     }
 
     pub fn set_tcp_no_delay(mut self, no_delay: bool) -> Self {
-        self.tcp_no_delay = no_delay;
+        self.builder = self.builder.tcp_nodelay(no_delay);
         self
     }
 
-    pub fn set_timeout(mut self, timeout: Option<Duration>) -> Self {
-        self.timeout = timeout;
+    pub fn set_timeout(mut self, timeout: Duration) -> Self {
+        self.builder = self.builder.connect_timeout(timeout);
         self
     }
 
     pub fn set_max_connections_per_host(mut self, max_connections_per_host: usize) -> Self {
-        self.max_connections_per_host = max_connections_per_host;
+        self.builder = self.builder.pool_max_idle_per_host(max_connections_per_host);
         self
     }
 
     pub fn set_verify_tls(mut self, verify_tls: bool) -> Self {
-        self.verify_tls = verify_tls;
+        self.builder = self.builder.danger_accept_invalid_certs(!verify_tls);
         self
     }
 
     pub fn set_auto_sys_proxy(mut self, proxy: bool) -> Self {
-        self.auto_sys_proxy = proxy;
+        if !proxy {
+            self.builder = self.builder.no_proxy();
+        }
         self
     }
 
-    pub fn build(self) -> HttpClient {
-        let mut config = reqwest::ClientBuilder::new()
-            .pool_max_idle_per_host(self.max_connections_per_host)
-            .http2_keep_alive_while_idle(self.http_keep_alive)
-            .danger_accept_invalid_certs(self.verify_tls)
-            .default_headers(self.headers);
-        if !self.auto_sys_proxy {
-            config = config.no_proxy();
-        }
-        if self.timeout.is_some() {
-            config = config.connect_timeout(self.timeout.unwrap())
-        }
+    pub fn add_root_certificate(mut self, cert: Certificate) -> Self {
+        self.builder = self.builder.add_root_certificate(cert);
+        self
+    }
+
+    pub fn tls_built_in_root_certs(mut self, tls_built_in_root_certs: bool) -> Self {
+        self.builder = self.builder.tls_built_in_root_certs(tls_built_in_root_certs);
+        self
+    }
+
+    pub fn identity(mut self, identity: Identity) -> Self {
+        self.builder = self.builder.identity(identity);
+        self
+    }
+
+    pub fn tls_sni(mut self, tls_sni: bool) -> Self {
+        self.builder = self.builder.tls_sni(tls_sni);
+        self
+    }
+
+    pub fn min_tls_version(mut self, version: tls::Version) -> Self {
+        self.builder = self.builder.min_tls_version(version);
+        self
+    }
+
+    pub fn max_tls_version(mut self, version: tls::Version) -> Self {
+        self.builder = self.builder.max_tls_version(version);
+        self
+    }
+
+    pub fn https_only(mut self, enabled: bool) -> Self {
+        self.builder = self.builder.https_only(enabled);
+        self
+    }
+
+    pub fn resolve(mut self, domain: &str, addr: SocketAddr) -> Self {
+        self.builder = self.builder.resolve(domain, addr);
+        self
+    }
+
+    pub fn resolve_to_addrs(mut self, domain: &str, addrs: &[SocketAddr]) -> Self {
+        self.builder = self.builder.resolve_to_addrs(domain, addrs);
+        self
+    }
+
+    pub fn dns_resolver<R: Resolve + 'static>(mut self, resolver: Arc<R>) -> Self {
+        self.builder = self.builder.dns_resolver(resolver);
+        self
+    }
+
+    pub fn proxy(mut self, proxy: Proxy) -> Self {
+        self.builder = self.builder.proxy(proxy);
+        self
+    }
+
+    pub fn build(mut self) -> HttpClient {
+        let mut config = self.builder.default_headers(self.headers);
 
         HttpClient {
             client: config.build().unwrap(),
