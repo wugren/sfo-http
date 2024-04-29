@@ -24,5 +24,7 @@ actix-web = { version = "4", optional = true}
 async-trait = "0.1.80"
 futures-util = "0.3"
 serde_qs = "0.13"
+actix-files = { version = "0.6", optional = true}
 
 [features]
+actix-web = ["actix-files", "dep:actix-web"]

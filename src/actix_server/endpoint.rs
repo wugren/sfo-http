@@ -1,19 +1,24 @@
+use std::ffi::OsStr;
 use std::future::Future;
 use std::marker::PhantomData;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;
+use actix_files::NamedFile;
 use actix_web::{FromRequest, Handler, HttpMessage, HttpRequest, HttpResponse, Responder, web};
 use actix_web::body::BoxBody;
 use actix_web::dev::{Payload, Service, ServiceRequest, ServiceResponse, Url};
 use actix_web::http::{Method, StatusCode, Version};
 use actix_web::http::header::{HeaderName, HeaderValue};
+use async_trait::async_trait;
 use futures_util::future::LocalBoxFuture;
 use futures_util::stream::IntoAsyncRead;
 use futures_util::{AsyncReadExt, StreamExt, TryStreamExt};
 use serde::de::DeserializeOwned;
 use crate::actix_server::body::{BodySize, MessageBody};
 use crate::errors::{ErrorCode, http_err, HttpError, HttpResult, into_http_err};
+use crate::http_server::Body;
 
 pub struct Request<State> {
     state: State,
@@ -22,6 +27,10 @@ pub struct Request<State> {
 }
 
 impl<State> Request<State> {
+    pub fn request(&self) -> &HttpRequest {
+        &self.request
+    }
+
     pub fn state(&self) -> &State {
         &self.state
     }
@@ -61,6 +70,10 @@ impl<State> Request<State> {
     pub fn header(&self,
                   key: impl Into<HeaderName>, ) -> Option<&HeaderValue> {
         self.request.headers().get(key.into())
+    }
+
+    pub fn header_all(&self, key: impl Into<HeaderName>) -> std::slice::Iter<'_, HeaderValue> {
+        self.request.headers().get_all(key.into())
     }
 
     pub fn param(&self, key: &str) -> HttpResult<&str> {
@@ -161,6 +174,15 @@ impl Response {
     }
 }
 
+impl From<HttpResponse> for Response {
+    fn from(resp: HttpResponse) -> Self {
+        Self {
+            resp: Some(resp)
+        }
+    }
+
+}
+
 #[async_trait::async_trait(?Send)]
 pub trait Endpoint<State: Clone + Send + Sync + 'static>: Send + Sync + 'static {
     async fn call(&self, req: Request<State>) -> HttpResult<Response>;
@@ -176,6 +198,91 @@ impl<State, F, Fut> Endpoint<State> for F
     async fn call(&self, req: Request<State>) -> HttpResult<Response> {
         let fut = (self)(req);
         fut.await
+    }
+}
+
+
+pub(crate) struct ServeDir {
+    prefix: String,
+    dir: PathBuf,
+}
+
+impl ServeDir {
+    /// Create a new instance of `ServeDir`.
+    pub(crate) fn new(prefix: String, dir: PathBuf) -> Self {
+        Self { prefix, dir }
+    }
+}
+
+#[async_trait::async_trait(?Send)]
+impl<State> Endpoint<State> for ServeDir
+    where
+        State: Clone + Send + Sync + 'static,
+{
+    async fn call(&self, req: Request<State>) -> HttpResult<Response> {
+        let path = req.url().path();
+        let path = path.strip_prefix(&self.prefix).unwrap();
+        let path = path.trim_start_matches('/');
+        let mut file_path = self.dir.clone();
+        for p in Path::new(path) {
+            if p == OsStr::new(".") {
+                continue;
+            } else if p == OsStr::new("..") {
+                file_path.pop();
+            } else {
+                file_path.push(&p);
+            }
+        }
+
+        log::info!("Requested file: {:?}", file_path);
+
+        if !file_path.starts_with(&self.dir) {
+            log::warn!("Unauthorized attempt to read: {:?}", file_path);
+            Ok(Response::new(StatusCode::FORBIDDEN))
+        } else {
+            match NamedFile::open_async(file_path.as_path()).await {
+                Ok(file) => {
+                    let resp = Response::from(file.into_response(req.request()));
+                    Ok(resp)
+                },
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    log::warn!("File not found: {:?}", &file_path);
+                    Ok(Response::new(StatusCode::NOT_FOUND))
+                },
+                Err(e) => Err(http_err!(ErrorCode::IOError, "read file failed {}", e)),
+            }
+        }
+    }
+}
+
+pub(crate) struct ServeFile {
+    path: PathBuf,
+}
+
+impl ServeFile {
+    /// Create a new instance of `ServeFile`.
+    pub(crate) fn init(path: impl AsRef<Path>) -> HttpResult<Self> {
+        let file = path.as_ref().to_owned().canonicalize().map_err(into_http_err!(ErrorCode::IOError, "path {} failed", path.as_ref().to_string_lossy()))?;
+        Ok(Self {
+            path: PathBuf::from(file),
+        })
+    }
+}
+
+#[async_trait(?Send)]
+impl<State: Clone + Send + Sync + 'static> Endpoint<State> for ServeFile {
+    async fn call(&self, req: Request<State>) -> HttpResult<Response> {
+        match NamedFile::open_async(self.path.as_path()).await {
+            Ok(file) => {
+                let resp = Response::from(file.into_response(req.request()));
+                Ok(resp)
+            },
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                log::warn!("File not found: {:?}", &self.path);
+                Ok(Response::new(StatusCode::NOT_FOUND))
+            },
+            Err(e) => Err(http_err!(ErrorCode::IOError, "read file failed {}", e)),
+        }
     }
 }
 

@@ -113,6 +113,7 @@ mod test_actix {
             }
         });
 
+        server.at("/test3").serve_dir(".").unwrap();
         println!("listening on 127.0.0.1:8080");
         server.run().await.unwrap();
     }
