@@ -1,3 +1,5 @@
+pub(crate) use sfo_result::err as http_err;
+pub(crate) use sfo_result::into_err as into_http_err;
 
 #[repr(u16)]
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -6,29 +8,8 @@ pub enum ErrorCode {
     InvalidData,
     ConnectFailed,
     InvalidParam,
+    ServerError,
+    NotFound,
 }
-
-#[derive(Debug)]
-pub struct HttpError {
-    code: ErrorCode,
-    msg: String,
-}
-
-impl HttpError {
-    pub fn new(code: impl Into<ErrorCode>, msg: impl Into<String>) -> Self {
-        Self {
-            code: code.into(),
-            msg: msg.into(),
-        }
-    }
-
-    pub fn code(&self) -> ErrorCode {
-        self.code
-    }
-
-    pub fn msg(&self) -> &str {
-        self.msg.as_str()
-    }
-}
-
-pub type HttpResult<T> = std::result::Result<T, HttpError>;
+pub type HttpError = sfo_result::Error<ErrorCode>;
+pub type HttpResult<T> = sfo_result::Result<T, ErrorCode>;

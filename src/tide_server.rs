@@ -1,6 +1,8 @@
+use std::ops::{Deref, DerefMut};
 use tide::http::headers::{COOKIE, HeaderValue};
 use tide::security::{CorsMiddleware, Origin};
 pub use tide::*;
+use crate::errors::{ErrorCode, HttpResult, into_http_err};
 
 pub struct HttpServer<T> {
     app: Server<T>,
@@ -31,15 +33,25 @@ impl<T: Clone + Send + Sync + 'static> HttpServer<T> {
         }
     }
 
-    pub fn app(&mut self) -> &mut Server<T> {
-        &mut self.app
-    }
-
-    pub async fn run(self) -> tide::Result<()> {
+    pub async fn run(self) -> HttpResult<()> {
         let addr = format!("{}:{}", self.server_addr, self.port);
         ::log::info!("start http server:{}", addr);
-        self.app.listen(addr).await?;
+        self.app.listen(addr).await.map_err(into_http_err!(ErrorCode::ServerError, "start http server failed"))?;
         Ok(())
+    }
+}
+
+impl<T> Deref for HttpServer<T> {
+    type Target = Server<T>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.app
+    }
+}
+
+impl<T> DerefMut for HttpServer<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.app
     }
 }
 
