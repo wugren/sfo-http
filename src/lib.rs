@@ -10,4 +10,7 @@ pub mod tide_governor_middleware;
 pub mod http_util;
 pub mod errors;
 #[cfg(feature = "actix-web")]
-mod actix_server;
+pub mod actix_server;
+
+#[cfg(feature = "openapi")]
+pub mod openapi;

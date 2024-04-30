@@ -1,13 +1,18 @@
 use std::ops::{Deref, DerefMut};
+use std::sync::Arc;
+use serde_json::json;
 use tide::http::headers::{COOKIE, HeaderValue};
 use tide::security::{CorsMiddleware, Origin};
 pub use tide::*;
-use crate::errors::{ErrorCode, HttpResult, into_http_err};
+use tide::http::Mime;
+use crate::errors::{ErrorCode, http_err, HttpResult, into_http_err};
 
 pub struct HttpServer<T> {
     app: Server<T>,
     server_addr: String,
-    port: u16
+    port: u16,
+    #[cfg(feature = "openapi")]
+    api_doc: Option<utoipa::openapi::OpenApi>
 }
 
 impl<T: Clone + Send + Sync + 'static> HttpServer<T> {
@@ -30,12 +35,54 @@ impl<T: Clone + Send + Sync + 'static> HttpServer<T> {
             app,
             server_addr,
             port,
+            #[cfg(feature = "openapi")]
+            api_doc: None,
         }
     }
 
-    pub async fn run(self) -> HttpResult<()> {
+    #[cfg(feature = "openapi")]
+    pub fn set_api_doc(&mut self, api_doc: crate::openapi::openapi::OpenApi) {
+        self.api_doc = Some(api_doc);
+    }
+
+    pub async fn run(mut self) -> HttpResult<()> {
         let addr = format!("{}:{}", self.server_addr, self.port);
         ::log::info!("start http server:{}", addr);
+        #[cfg(feature = "openapi")]
+        {
+            if self.api_doc.is_some() {
+                let api_doc = self.api_doc.clone();
+                self.app.at("/api-docs/openapi.json").get(move |_| {
+                    let api_doc = api_doc.clone();
+                    async move {
+                        Ok(Response::builder(200)
+                            .body(json!(api_doc.unwrap()))
+                            .build())
+                    }
+                });
+                async fn serve_swagger<T>(request: Request<T>) -> Result<Response> {
+                    let path = request.url().path().to_string();
+                    let tail = path.strip_prefix("/swagger-ui/").unwrap();
+                    let config = Arc::new(utoipa_swagger_ui::Config::from("/api-docs/openapi.json"));
+
+                    match utoipa_swagger_ui::serve(tail, config) {
+                        Ok(swagger_file) => swagger_file
+                            .map(|file| {
+                                Ok(Response::builder(200)
+                                    .body(file.bytes.to_vec())
+                                    .content_type(file.content_type.parse::<Mime>().map_err(|e| {
+                                        http_err!(ErrorCode::ServerError, "parse mime error {}", e)
+                                    })?)
+                                    .build())
+                            })
+                            .unwrap_or_else(|| Ok(Response::builder(404).build())),
+                        Err(error) => Ok(Response::builder(500).body(error.to_string()).build()),
+                    }
+                }
+
+                self.app.at("/swagger-ui/*").get(serve_swagger);
+            }
+        }
         self.app.listen(addr).await.map_err(into_http_err!(ErrorCode::ServerError, "start http server failed"))?;
         Ok(())
     }

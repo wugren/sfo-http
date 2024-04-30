@@ -18,7 +18,6 @@ use futures_util::{AsyncReadExt, StreamExt, TryStreamExt};
 use serde::de::DeserializeOwned;
 use crate::actix_server::body::{BodySize, MessageBody};
 use crate::errors::{ErrorCode, http_err, HttpError, HttpResult, into_http_err};
-use crate::http_server::Body;
 
 pub struct Request<State> {
     state: State,
