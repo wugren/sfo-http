@@ -8,19 +8,44 @@ macro_rules! def_openapi {
 }
 pub use utoipa::*;
 pub use paste::paste;
+use utoipa::openapi::path::PathItemBuilder;
+use utoipa::openapi::PathItem;
 
 #[macro_export]
 macro_rules! add_openapi_item {
     ($api_doc: expr, $name: ident) => {
         sfo_http::openapi::paste! {
-            sfo_http::openapi::OpenApiServer::add_api_item::<[<__path_ $name>]>($api_doc);
+            {
+                use sfo_http::openapi::Path;
+                #[allow(non_camel_case_types)]
+                struct [<___path_ $name>];
+                #[allow(non_camel_case_types)]
+                impl sfo_http::openapi::__dev::PathConfig for [<___path_ $name>] {
+                    fn path() -> String {
+                        [<__path_ $name>]::path()
+                    }
+                    fn methods() -> Vec<sfo_http::openapi::openapi::path::HttpMethod> {
+                        [<__path_ $name>]::methods()
+                    }
+                    fn tags_and_operation() -> (Vec<&'static str>, sfo_http::openapi::openapi::path::Operation)
+                    {
+                        let item = [<__path_ $name>]::operation();
+                        let mut tags = <[<__path_ $name>] as sfo_http::openapi::__dev::Tags>::tags();
+                        if !"".is_empty() && tags.is_empty() {
+                            tags.push("");
+                        }
+                        (tags, item)
+                    }
+                }
+                sfo_http::openapi::OpenApiServer::add_api_item::<[<___path_ $name>]>($api_doc);
+            }
         }
     };
 }
 
 #[macro_export]
 macro_rules! add_openapi_schema {
-    ($api_doc: expr, $name: ident) => {
+    ($api_doc: expr, $name: ty) => {
         sfo_http::openapi::paste! {
             sfo_http::openapi::OpenApiServer::add_schema_item::<$name>($api_doc);
         }
@@ -32,14 +57,35 @@ pub trait OpenApiServer {
     fn set_api_doc(&mut self, api_doc: openapi::OpenApi);
     fn get_api_doc(&mut self) -> &mut openapi::OpenApi;
     fn add_api_item<P: Path>(&mut self) {
-        self.get_api_doc().paths.paths.insert(P::path(), P::path_item(Some("")));
+        let methods = P::methods();
+        let operation = P::operation();
+
+        // for one operation method avoid clone
+        let path_item = if methods.len() == 1 {
+            PathItem::new(
+                methods
+                    .into_iter()
+                    .next()
+                    .expect("must have one operation method"),
+                operation,
+            )
+        } else {
+            methods
+                .into_iter()
+                .fold(PathItemBuilder::new(), |path_item, method| {
+                    path_item.operation(method, operation.clone())
+                })
+                .build()
+        };
+        self.get_api_doc().paths.paths.insert(P::path(), path_item);
     }
 
-    fn add_schema_item<S: for<'a> ToSchema<'a>>(&mut self) {
+    fn add_schema_item<S: ToSchema>(&mut self) {
         if self.get_api_doc().components.is_none() {
             self.get_api_doc().components = Some(openapi::Components::default());
         }
-        let (name, obj) = S::schema();
+        let name = S::name();
+        let obj = S::schema();
         if self.get_api_doc().components.as_mut().unwrap().schemas.contains_key(&name.to_string()) {
             return;
         }

@@ -2606,7 +2606,7 @@ dependencies = [
 
 [[package]]
 name = "sfo-http"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "actix-files",
  "actix-web",
@@ -2625,7 +2625,7 @@ dependencies = [
  "serde_qs 0.13.0",
  "sfo-result",
  "tide",
- "utoipa",
+ "utoipa 5.0.0-beta.0",
  "utoipa-swagger-ui",
 ]
 
@@ -3235,7 +3235,18 @@ dependencies = [
  "indexmap",
  "serde",
  "serde_json",
- "utoipa-gen",
+ "utoipa-gen 4.3.0",
+]
+
+[[package]]
+name = "utoipa"
+version = "5.0.0-beta.0"
+source = "git+https://github.com/juhaku/utoipa.git#576f6c129010b4f6e6445c06393cfcf2cfee30df"
+dependencies = [
+ "indexmap",
+ "serde",
+ "serde_json",
+ "utoipa-gen 5.0.0-beta.0",
 ]
 
 [[package]]
@@ -3245,6 +3256,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7bf0e16c02bc4bf5322ab65f10ab1149bdbcaa782cba66dc7057370a3f8190be"
 dependencies = [
  "proc-macro-error",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.77",
+]
+
+[[package]]
+name = "utoipa-gen"
+version = "5.0.0-beta.0"
+source = "git+https://github.com/juhaku/utoipa.git#576f6c129010b4f6e6445c06393cfcf2cfee30df"
+dependencies = [
  "proc-macro2",
  "quote",
  "regex",
@@ -3263,7 +3284,7 @@ dependencies = [
  "rust-embed",
  "serde",
  "serde_json",
- "utoipa",
+ "utoipa 4.2.3",
  "zip",
 ]
 
