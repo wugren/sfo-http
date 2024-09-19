@@ -5,14 +5,31 @@ use tide::http::headers::{COOKIE, HeaderValue};
 use tide::security::{CorsMiddleware, Origin};
 pub use tide::*;
 use tide::http::Mime;
+use utoipa::openapi::{OpenApi, PathItem};
 use crate::errors::{ErrorCode, http_err, HttpResult, into_http_err};
+use crate::openapi::OpenApiServer;
 
 pub struct HttpServer<T> {
     app: Server<T>,
     server_addr: String,
     port: u16,
     #[cfg(feature = "openapi")]
-    api_doc: Option<utoipa::openapi::OpenApi>
+    api_doc: Option<OpenApi>
+}
+
+#[cfg(feature = "openapi")]
+impl<T: Clone + Send + Sync + 'static> OpenApiServer for HttpServer<T> {
+    fn set_api_doc(&mut self, api_doc: OpenApi) {
+        self.api_doc = Some(api_doc);
+    }
+
+    fn get_api_doc(&mut self) -> &mut OpenApi {
+        if self.api_doc.is_none() {
+            self.api_doc = Some(utoipa::openapi::OpenApiBuilder::new().build());
+        }
+
+        self.api_doc.as_mut().unwrap()
+    }
 }
 
 impl<T: Clone + Send + Sync + 'static> HttpServer<T> {
@@ -40,11 +57,6 @@ impl<T: Clone + Send + Sync + 'static> HttpServer<T> {
         }
     }
 
-    #[cfg(feature = "openapi")]
-    pub fn set_api_doc(&mut self, api_doc: crate::openapi::openapi::OpenApi) {
-        self.api_doc = Some(api_doc);
-    }
-
     pub async fn run(mut self) -> HttpResult<()> {
         let addr = format!("{}:{}", self.server_addr, self.port);
         ::log::info!("start http server:{}", addr);
@@ -62,10 +74,14 @@ impl<T: Clone + Send + Sync + 'static> HttpServer<T> {
                 });
                 async fn serve_swagger<T>(request: Request<T>) -> Result<Response> {
                     let path = request.url().path().to_string();
-                    let tail = path.strip_prefix("/swagger-ui/").unwrap();
+                    let tail = if path == "/doc" {
+                        ""
+                    } else {
+                        path.strip_prefix("/doc/").unwrap()
+                    };
                     let config = Arc::new(utoipa_swagger_ui::Config::from("/api-docs/openapi.json"));
 
-                    match utoipa_swagger_ui::serve(tail, config) {
+                    match utoipa_swagger_ui::serve(if tail.is_empty() {"index.html"} else {tail}, config) {
                         Ok(swagger_file) => swagger_file
                             .map(|file| {
                                 Ok(Response::builder(200)
@@ -80,7 +96,11 @@ impl<T: Clone + Send + Sync + 'static> HttpServer<T> {
                     }
                 }
 
-                self.app.at("/swagger-ui/*").get(serve_swagger);
+                self.app.at("/doc/*").get(serve_swagger);
+                self.app.at("/doc").get(|_| async {
+                    Ok(Redirect::new("/doc/"))
+                });
+                self.app.at("/doc/").get(serve_swagger);
             }
         }
         self.app.listen(addr).await.map_err(into_http_err!(ErrorCode::ServerError, "start http server failed"))?;

@@ -5,7 +5,9 @@ pub use actix_web::*;
 pub use actix_web::HttpServer as ActixHttpServer;
 use actix_web::dev::{fn_factory, ServiceFactory, ServiceRequest};
 use actix_web::http::Method;
+use utoipa::openapi::OpenApi;
 use crate::actix_server::{Endpoint, EndpointHandler, Request, Response};
+use crate::openapi::OpenApiServer;
 
 pub struct HttpServer<State: Clone + Send + Sync + 'static> {
     server_addr: String,
@@ -14,6 +16,21 @@ pub struct HttpServer<State: Clone + Send + Sync + 'static> {
     state: State,
     #[cfg(feature = "openapi")]
     api_doc: Option<utoipa::openapi::OpenApi>
+}
+
+#[cfg(feature = "openapi")]
+impl<T: Clone + Send + Sync + 'static> OpenApiServer for HttpServer<T> {
+    fn set_api_doc(&mut self, api_doc: OpenApi) {
+        self.api_doc = Some(api_doc);
+    }
+
+    fn get_api_doc(&mut self) -> &mut OpenApi {
+        if self.api_doc.is_none() {
+            self.api_doc = Some(utoipa::openapi::OpenApiBuilder::new().build());
+        }
+
+        self.api_doc.as_mut().unwrap()
+    }
 }
 
 impl<State: 'static + Clone + Send + Sync> HttpServer<State> {
@@ -26,11 +43,6 @@ impl<State: 'static + Clone + Send + Sync> HttpServer<State> {
             #[cfg(feature = "openapi")]
             api_doc: None,
         }
-    }
-
-    #[cfg(feature = "openapi")]
-    pub fn set_api_doc(&mut self, api_doc: crate::openapi::openapi::OpenApi) {
-        self.api_doc = Some(api_doc);
     }
 
     pub async fn run(self) -> HttpResult<()> {
@@ -79,7 +91,14 @@ impl<State: 'static + Clone + Send + Sync> HttpServer<State> {
             #[cfg(feature = "openapi")]
             {
                 if api_doc.is_some() {
-                    app = app.service(utoipa_swagger_ui::SwaggerUi::new("/swagger-ui/{_:.*}").url("/api-docs/openapi.json", api_doc.unwrap()))
+                    app = app.service(utoipa_swagger_ui::SwaggerUi::new("/doc/{_:.*}").url("/api-docs/openapi.json", api_doc.unwrap()));
+                    async fn doc() -> impl Responder {
+                        HttpResponse::Found()
+                            .append_header(("Location", "/doc/"))
+                            .finish()
+                    }
+
+                    app = app.route("/doc", web::get().to(doc));
                 }
             }
             app
@@ -133,7 +152,7 @@ impl<State: 'static + Clone + Send + Sync> HttpServer<State> {
         #[cfg(feature = "openapi")]
         {
             if self.api_doc.is_some() {
-                app = app.service(utoipa_swagger_ui::SwaggerUi::new("/swagger-ui/{_:.*}").url("/api-docs/openapi.json", self.api_doc.clone().unwrap()))
+                app = app.service(utoipa_swagger_ui::SwaggerUi::new("/swagger-ui/{_:.*}").url("/api-docs/openapi.json", self.api_doc.clone().unwrap()));
             }
         }
         app
@@ -149,9 +168,15 @@ mod test_actix {
     #[cfg(feature = "openapi")]
     use utoipa::ToSchema;
     #[cfg(feature = "openapi")]
-    use crate::def_open_api;
+    use crate::def_openapi;
     #[cfg(feature = "openapi")]
     use utoipa::OpenApi;
+    #[cfg(feature = "openapi")]
+    use crate::add_openapi_item;
+    #[cfg(feature = "openapi")]
+    use crate as sfo_http;
+    #[cfg(feature = "openapi")]
+    use crate::openapi::OpenApiServer;
 
     #[cfg(feature = "openapi")]
     #[derive(Deserialize, Serialize, ToSchema)]
@@ -168,45 +193,34 @@ mod test_actix {
     }
 
     #[cfg(feature = "openapi")]
-    def_open_api! {
-        [test1]
-        #[utoipa::path(
-            get,
-            path = "/test1/{name}",
-            responses(
-                (status = 200, description = "test", body = String)
-            ),
-            params(
-                ("name" = String, Path, description = "test name"),
-            )
-        )]
-    }
-
-    #[cfg(feature = "openapi")]
-    def_open_api!{
-        [test2]
-        #[utoipa::path(
-            post,
-            path = "/test2",
-            responses(
-                (status = 200, description = "test", body = Test)
-            ),
-            params(
-                ("a" = String, Query, description = "test a"),
-                ("b" = u16, Query, description = "test b"),
-            ),
-            request_body = Test,
-        )]
-    }
-
-    #[cfg(feature = "openapi")]
     #[derive(utoipa::OpenApi)]
-    #[openapi(paths(test1, test2), components(schemas(Test)))]
+    #[openapi(paths(), components())]
     struct ApiDoc;
 
     #[actix_web::test]
     async fn test() {
         let mut server = HttpServer::new((), "127.0.0.1", 8080);
+
+        #[cfg(feature = "openapi")]
+        {
+            let openapi = ApiDoc::openapi();
+            server.set_api_doc(openapi);
+        }
+
+        #[cfg(feature = "openapi")]
+        def_openapi! {
+            [test1]
+            #[utoipa::path(
+                get,
+                path = "/test1/{name}",
+                responses(
+                    (status = 200, description = "test", body = String)
+                ),
+                params(
+                    ("name" = String, Path, description = "test name"),
+                )
+            )]
+        }
         server.at("/test1/{name}").get(|req: Request<()>| {
             async move {
                 let name = req.param("name").unwrap();
@@ -217,7 +231,25 @@ mod test_actix {
                 Ok(resp)
             }
         });
+        #[cfg(feature = "openapi")]
+        add_openapi_item!(&mut server, test1);
 
+        #[cfg(feature = "openapi")]
+        def_openapi! {
+            [test2]
+            #[utoipa::path(
+                post,
+                path = "/test2",
+                responses(
+                    (status = 200, description = "test", body = inline(Test))
+                ),
+                params(
+                    ("a" = String, Query, description = "test a"),
+                    ("b" = u16, Query, description = "test b"),
+                ),
+                request_body = Test,
+            )]
+        }
         server.at("/test2").post(|mut req: Request<()>| {
             async move {
                 let t: Test = req.query().unwrap();
@@ -229,15 +261,15 @@ mod test_actix {
                 Ok(resp)
             }
         });
+        {
+            let server1 = &mut server;
+            #[cfg(feature = "openapi")]
+            add_openapi_item!(server1, test2);
+        }
 
         server.at("/test3").serve_dir(".").unwrap();
         println!("listening on 127.0.0.1:8080");
 
-        #[cfg(feature = "openapi")]
-        {
-            let openapi = ApiDoc::openapi();
-            server.set_api_doc(openapi);
-        }
 
         // server.run().await.unwrap();
     }
