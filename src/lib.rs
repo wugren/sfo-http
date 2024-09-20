@@ -14,3 +14,6 @@ pub mod actix_server;
 
 #[cfg(feature = "openapi")]
 pub mod openapi;
+
+#[cfg(feature = "hash_sign")]
+pub mod hash_sign;
