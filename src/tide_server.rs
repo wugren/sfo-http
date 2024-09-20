@@ -8,6 +8,7 @@ use tide::http::Mime;
 #[cfg(feature = "openapi")]
 use utoipa::openapi::{OpenApi, PathItem};
 use crate::errors::{ErrorCode, http_err, HttpResult, into_http_err};
+#[cfg(feature = "openapi")]
 use crate::openapi::OpenApiServer;
 
 pub struct HttpServer<T> {

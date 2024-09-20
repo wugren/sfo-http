@@ -8,6 +8,7 @@ use actix_web::http::Method;
 #[cfg(feature = "openapi")]
 use utoipa::openapi::OpenApi;
 use crate::actix_server::{Endpoint, EndpointHandler, Request, Response};
+#[cfg(feature = "openapi")]
 use crate::openapi::OpenApiServer;
 
 pub struct HttpServer<State: Clone + Send + Sync + 'static> {
