@@ -5,6 +5,7 @@ pub use actix_web::*;
 pub use actix_web::HttpServer as ActixHttpServer;
 use actix_web::dev::{fn_factory, ServiceFactory, ServiceRequest};
 use actix_web::http::Method;
+#[cfg(feature = "openapi")]
 use utoipa::openapi::OpenApi;
 use crate::actix_server::{Endpoint, EndpointHandler, Request, Response};
 use crate::openapi::OpenApiServer;

@@ -5,6 +5,7 @@ use tide::http::headers::{COOKIE, HeaderValue};
 use tide::security::{CorsMiddleware, Origin};
 pub use tide::*;
 use tide::http::Mime;
+#[cfg(feature = "openapi")]
 use utoipa::openapi::{OpenApi, PathItem};
 use crate::errors::{ErrorCode, http_err, HttpResult, into_http_err};
 use crate::openapi::OpenApiServer;
