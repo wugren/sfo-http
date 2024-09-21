@@ -1,15 +1,55 @@
+use std::fmt::Debug;
 use std::future::Future;
 use std::sync::Arc;
 use crate::errors::{ErrorCode, HttpResult, into_http_err};
 pub use actix_web::*;
 pub use actix_web::HttpServer as ActixHttpServer;
 use actix_web::dev::{fn_factory, ServiceFactory, ServiceRequest};
-use actix_web::http::Method;
+use actix_web::http::{Method, StatusCode};
+use serde::{Deserialize, Serialize};
 #[cfg(feature = "openapi")]
 use utoipa::openapi::OpenApi;
 use crate::actix_server::{Endpoint, EndpointHandler, Request, Response};
 #[cfg(feature = "openapi")]
 use crate::openapi::OpenApiServer;
+
+#[derive(Serialize, Deserialize)]
+pub struct HttpJsonResult<T>
+{
+    pub err: u16,
+    pub msg: String,
+    pub result: Option<T>
+}
+
+impl <T> HttpJsonResult<T>
+where T: Serialize
+{
+    pub fn from<C: Debug + Copy + Sync + Send + 'static + Into<u16>>(ret: sfo_result::Result<T, C>) -> Self {
+        match ret {
+            Ok(data) => {
+                HttpJsonResult {
+                    err: 0,
+                    msg: "".to_string(),
+                    result: Some(data)
+                }
+            },
+            Err(err) => {
+                HttpJsonResult {
+                    err: err.code().into(),
+                    msg: format!("{}", err.msg()),
+                    result: None
+                }
+            }
+        }
+    }
+
+    pub fn to_response(&self) -> Response {
+        let mut resp = Response::new(StatusCode::OK);
+        resp.set_content_type("application/json");
+        resp.set_body(serde_json::to_string(self).unwrap());
+        resp
+    }
+}
 
 pub struct HttpServer<State: Clone + Send + Sync + 'static> {
     server_addr: String,

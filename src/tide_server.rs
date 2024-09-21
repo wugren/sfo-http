@@ -1,5 +1,7 @@
+use std::fmt::Debug;
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tide::http::headers::{COOKIE, HeaderValue};
 use tide::security::{CorsMiddleware, Origin};
@@ -10,6 +12,44 @@ use utoipa::openapi::{OpenApi, PathItem};
 use crate::errors::{ErrorCode, http_err, HttpResult, into_http_err};
 #[cfg(feature = "openapi")]
 use crate::openapi::OpenApiServer;
+
+#[derive(Serialize, Deserialize)]
+pub struct HttpJsonResult<T>
+{
+    pub err: u16,
+    pub msg: String,
+    pub result: Option<T>
+}
+
+impl <T> HttpJsonResult<T>
+where T: Serialize
+{
+    pub fn from<C: Debug + Copy + Sync + Send + 'static + Into<u16>>(ret: sfo_result::Result<T, C>) -> Self {
+        match ret {
+            Ok(data) => {
+                HttpJsonResult {
+                    err: 0,
+                    msg: "".to_string(),
+                    result: Some(data)
+                }
+            },
+            Err(err) => {
+                HttpJsonResult {
+                    err: err.code().into(),
+                    msg: format!("{}", err.msg()),
+                    result: None
+                }
+            }
+        }
+    }
+
+    pub fn to_response(&self) -> Response {
+        let mut resp = Response::new(StatusCode::Ok);
+        resp.set_content_type("application/json");
+        resp.set_body(serde_json::to_string(self).unwrap());
+        resp
+    }
+}
 
 pub struct HttpServer<T> {
     app: Server<T>,
