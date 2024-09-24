@@ -1,3 +1,4 @@
+use std::time::Duration;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 pub use jsonwebtoken::*;
@@ -21,6 +22,17 @@ pub struct Payload<T> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub jti: Option<u64>, //编号
     pub data: T,
+}
+
+impl<T> Payload<T> {
+    pub fn is_expire(&self, interval: Duration) -> bool {
+        if let Some(exp) = self.exp {
+            let now = Utc::now().timestamp();
+            exp < now as u64 + interval.as_secs()
+        } else {
+            false
+        }
+    }
 }
 
 pub struct JsonWebToken;
