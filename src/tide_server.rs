@@ -34,9 +34,14 @@ where T: Serialize
                 }
             },
             Err(err) => {
+                let msg = if err.msg().is_empty() {
+                    format!("{:?}", err.code())
+                } else {
+                    err.msg().to_string()
+                };
                 HttpJsonResult {
                     err: err.code().into(),
-                    msg: format!("{}", err.msg()),
+                    msg,
                     result: None
                 }
             }
@@ -140,7 +145,7 @@ impl<T: Clone + Send + Sync + 'static> HttpServer<T> {
 
                 self.app.at("/doc/*").get(serve_swagger);
                 self.app.at("/doc").get(|_| async {
-                    Ok(Redirect::new("/doc/"))
+                    Ok(Redirect::new("./doc/"))
                 });
                 self.app.at("/doc/").get(serve_swagger);
             }

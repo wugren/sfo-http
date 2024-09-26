@@ -34,9 +34,14 @@ where T: Serialize
                 }
             },
             Err(err) => {
+                let msg = if err.msg().is_empty() {
+                    format!("{:?}", err.code())
+                } else {
+                    err.msg().to_string()
+                };
                 HttpJsonResult {
                     err: err.code().into(),
-                    msg: format!("{}", err.msg()),
+                    msg,
                     result: None
                 }
             }
