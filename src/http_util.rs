@@ -247,7 +247,20 @@ impl HttpClient {
 
     fn get_url(&self, uri: &str) -> String {
         if self.base_url.is_some() {
-            format!("{}{}", self.base_url.as_ref().unwrap(), uri)
+            let base_url = self.base_url.as_ref().unwrap().as_str();
+            if base_url.ends_with("/") {
+                if uri.starts_with("/") {
+                    format!("{}{}", base_url, &uri[1..])
+                } else {
+                    format!("{}{}", base_url, uri)
+                }
+            } else {
+                if uri.starts_with("/") {
+                    format!("{}{}", base_url, uri)
+                } else {
+                    format!("{}/{}", base_url, uri)
+                }
+            }
         } else {
             uri.to_string()
         }
@@ -335,6 +348,15 @@ impl HttpClient {
             HttpError::new(ErrorCode::InvalidData, msg)
         })?;
         Ok((data.to_vec(), header))
+    }
+
+    pub async fn execute(&self, req: Request) -> HttpResult<Response> {
+        let url = req.url().to_string();
+        self.client.execute(req).await.map_err(|err| {
+            let msg = format!("http connect error! url={} err={}", url, err);
+            log::error!("{}", msg.as_str());
+            HttpError::new(ErrorCode::ConnectFailed, msg)
+        })
     }
 }
 
