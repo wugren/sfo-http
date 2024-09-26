@@ -91,6 +91,7 @@ pub trait OpenApiServer {
         }
         self.get_api_doc().components.as_mut().unwrap().schemas.insert(name.to_string(), obj);
     }
+    fn enable_api_doc(&mut self, enable: bool);
 }
 
 

@@ -62,7 +62,8 @@ pub struct HttpServer<State: Clone + Send + Sync + 'static> {
     router_list: Vec<(Method, String, EndpointHandler<State>)>,
     state: State,
     #[cfg(feature = "openapi")]
-    api_doc: Option<utoipa::openapi::OpenApi>
+    api_doc: Option<utoipa::openapi::OpenApi>,
+    enable_api_doc: bool,
 }
 
 #[cfg(feature = "openapi")]
@@ -78,6 +79,10 @@ impl<T: Clone + Send + Sync + 'static> OpenApiServer for HttpServer<T> {
 
         self.api_doc.as_mut().unwrap()
     }
+
+    fn enable_api_doc(&mut self, enable: bool) {
+        self.enable_api_doc = enable;
+    }
 }
 
 impl<State: 'static + Clone + Send + Sync> HttpServer<State> {
@@ -89,6 +94,7 @@ impl<State: 'static + Clone + Send + Sync> HttpServer<State> {
             state,
             #[cfg(feature = "openapi")]
             api_doc: None,
+            enable_api_doc: false,
         }
     }
 
@@ -100,8 +106,6 @@ impl<State: 'static + Clone + Send + Sync> HttpServer<State> {
         let api_doc = self.api_doc.clone();
 
         actix_web::HttpServer::new(move || {
-            #[cfg(feature = "openapi")]
-            let api_doc = api_doc.clone();
             let mut app = actix_web::App::new();
             for (method, path, handler) in router_list.iter() {
                 let handler = handler.clone();
@@ -137,7 +141,8 @@ impl<State: 'static + Clone + Send + Sync> HttpServer<State> {
             }
             #[cfg(feature = "openapi")]
             {
-                if api_doc.is_some() {
+                let api_doc = api_doc.clone();
+                if self.enable_api_doc && api_doc.is_some() {
                     app = app.service(utoipa_swagger_ui::SwaggerUi::new("/doc/{_:.*}").url("/api-docs/openapi.json", api_doc.unwrap()));
                     async fn doc() -> impl Responder {
                         HttpResponse::Found()

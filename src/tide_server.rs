@@ -61,7 +61,8 @@ pub struct HttpServer<T> {
     server_addr: String,
     port: u16,
     #[cfg(feature = "openapi")]
-    api_doc: Option<OpenApi>
+    api_doc: Option<OpenApi>,
+    enable_api_doc: bool,
 }
 
 #[cfg(feature = "openapi")]
@@ -76,6 +77,10 @@ impl<T: Clone + Send + Sync + 'static> OpenApiServer for HttpServer<T> {
         }
 
         self.api_doc.as_mut().unwrap()
+    }
+
+    fn enable_api_doc(&mut self, enable: bool) {
+        self.enable_api_doc = enable;
     }
 }
 
@@ -101,6 +106,7 @@ impl<T: Clone + Send + Sync + 'static> HttpServer<T> {
             port,
             #[cfg(feature = "openapi")]
             api_doc: None,
+            enable_api_doc: true,
         }
     }
 
@@ -109,7 +115,7 @@ impl<T: Clone + Send + Sync + 'static> HttpServer<T> {
         ::log::info!("start http server:{}", addr);
         #[cfg(feature = "openapi")]
         {
-            if self.api_doc.is_some() {
+            if self.enable_api_doc && self.api_doc.is_some() {
                 let api_doc = self.api_doc.clone();
                 self.app.at("/api-docs/openapi.json").get(move |_| {
                     let api_doc = api_doc.clone();
