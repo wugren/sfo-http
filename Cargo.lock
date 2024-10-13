@@ -2640,7 +2640,7 @@ dependencies = [
 
 [[package]]
 name = "sfo-http"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "actix-files",
  "actix-web",
@@ -3271,8 +3271,8 @@ dependencies = [
 
 [[package]]
 name = "utoipa"
-version = "5.0.0-beta.0"
-source = "git+https://github.com/juhaku/utoipa.git#576f6c129010b4f6e6445c06393cfcf2cfee30df"
+version = "5.0.0-rc.0"
+source = "git+https://github.com/juhaku/utoipa.git#7d105161d3f25d3634f1ba0445a98a016a782cc7"
 dependencies = [
  "indexmap",
  "serde",
@@ -3282,8 +3282,8 @@ dependencies = [
 
 [[package]]
 name = "utoipa-gen"
-version = "5.0.0-beta.0"
-source = "git+https://github.com/juhaku/utoipa.git#576f6c129010b4f6e6445c06393cfcf2cfee30df"
+version = "5.0.0-rc.0"
+source = "git+https://github.com/juhaku/utoipa.git#7d105161d3f25d3634f1ba0445a98a016a782cc7"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3293,8 +3293,8 @@ dependencies = [
 
 [[package]]
 name = "utoipa-swagger-ui"
-version = "7.1.1-beta.0"
-source = "git+https://github.com/juhaku/utoipa.git#576f6c129010b4f6e6445c06393cfcf2cfee30df"
+version = "7.1.1-rc.0"
+source = "git+https://github.com/juhaku/utoipa.git#7d105161d3f25d3634f1ba0445a98a016a782cc7"
 dependencies = [
  "actix-web",
  "mime_guess",

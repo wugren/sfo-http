@@ -85,19 +85,21 @@ impl<T: Clone + Send + Sync + 'static> OpenApiServer for HttpServer<T> {
 }
 
 impl<T: Clone + Send + Sync + 'static> HttpServer<T> {
-    pub fn new(state: T, server_addr: String, port: u16, allow_origin: Option<Vec<String>>) -> Self {
+    pub fn new(state: T, server_addr: String, port: u16, allow_origin: Option<Vec<String>>, allow_headers: Option<String>, ) -> Self {
         let mut app = tide::with_state(state);
 
-        let cors = CorsMiddleware::new()
+        let mut cors = CorsMiddleware::new()
             .allow_methods(
                 "GET, POST, PUT, DELETE, OPTIONS"
                     .parse::<HeaderValue>()
                     .unwrap(),
             )
             .allow_origin(Origin::from(allow_origin.unwrap_or(vec!["*".to_string()])))
-            .allow_credentials(true)
-            .allow_headers("*".parse::<HeaderValue>().unwrap())
-            .expose_headers("*".parse::<HeaderValue>().unwrap());
+            .allow_credentials(true);
+        if allow_headers.is_some() {
+            cors = cors.allow_headers(allow_headers.as_ref().unwrap().as_str().parse::<HeaderValue>().unwrap())
+                .expose_headers(allow_headers.as_ref().unwrap().as_str().parse::<HeaderValue>().unwrap());
+        }
         app.with(cors);
 
         Self {
