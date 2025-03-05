@@ -7,10 +7,43 @@ macro_rules! def_openapi {
     };
 }
 pub use utoipa;
+pub use serde_with;
 pub use paste::paste;
+use serde::{Deserialize, Serialize};
 use utoipa::{openapi, Path, ToSchema};
 use utoipa::openapi::path::PathItemBuilder;
 use utoipa::openapi::PathItem;
+use serde_with::DefaultOnNull;
+
+#[serde_with::serde_as]
+#[derive(Serialize, Deserialize, ToSchema)]
+pub struct OpenapiResult<T: ToSchema>
+{
+    pub err: u16,
+    #[serde_as(deserialize_as = "DefaultOnNull")]
+    pub msg: String,
+    #[schema(inline)]
+    pub result: Option<T>
+}
+
+#[serde_with::serde_as]
+#[derive(Serialize, Deserialize, ToSchema)]
+pub struct OpenapiArrayResult<T: ToSchema>
+{
+    pub err: u16,
+    #[serde_as(deserialize_as = "DefaultOnNull")]
+    pub msg: String,
+    #[schema(inline)]
+    pub result: Option<Vec<T>>
+}
+
+#[serde_with::serde_as]
+#[derive(Serialize, Deserialize, ToSchema)]
+pub struct OpenapiNoValueResult {
+    pub err: u16,
+    #[serde_as(deserialize_as = "DefaultOnNull")]
+    pub msg: String,
+}
 
 #[macro_export]
 macro_rules! add_openapi_item {
