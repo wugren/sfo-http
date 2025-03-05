@@ -2,8 +2,6 @@
 
 #[cfg(feature = "tide")]
 pub mod tide_server;
-#[cfg(feature = "tide")]
-pub use tide_server as http_server;
 pub mod token_helper;
 #[cfg(feature = "tide")]
 pub mod tide_governor_middleware;
@@ -17,3 +15,4 @@ pub mod openapi;
 
 #[cfg(feature = "hash_sign")]
 pub mod hash_sign;
+pub mod http_server;

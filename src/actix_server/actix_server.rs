@@ -3,60 +3,18 @@ use std::future::Future;
 use std::sync::Arc;
 use crate::errors::{ErrorCode, HttpResult, into_http_err};
 pub use actix_web::*;
-pub use actix_web::HttpServer as ActixHttpServer;
 use actix_web::dev::{fn_factory, ServiceFactory, ServiceRequest};
 use actix_web::http::{Method, StatusCode};
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "openapi")]
 use utoipa::openapi::OpenApi;
-use crate::actix_server::{Endpoint, EndpointHandler, Request, Response};
+use crate::actix_server::{EndpointHandler, ActixRequest, ActixResponse};
+use crate::http_server::Response;
 #[cfg(feature = "openapi")]
 use crate::openapi::OpenApiServer;
 
-#[derive(Serialize, Deserialize)]
-pub struct HttpJsonResult<T>
-{
-    pub err: u16,
-    pub msg: String,
-    pub result: Option<T>
-}
-
-impl <T> HttpJsonResult<T>
-where T: Serialize
-{
-    pub fn from<C: Debug + Copy + Sync + Send + 'static + Into<u16>>(ret: sfo_result::Result<T, C>) -> Self {
-        match ret {
-            Ok(data) => {
-                HttpJsonResult {
-                    err: 0,
-                    msg: "".to_string(),
-                    result: Some(data)
-                }
-            },
-            Err(err) => {
-                let msg = if err.msg().is_empty() {
-                    format!("{:?}", err.code())
-                } else {
-                    err.msg().to_string()
-                };
-                HttpJsonResult {
-                    err: err.code().into(),
-                    msg,
-                    result: None
-                }
-            }
-        }
-    }
-
-    pub fn to_response(&self) -> Response {
-        let mut resp = Response::new(StatusCode::OK);
-        resp.set_content_type("application/json");
-        resp.set_body(serde_json::to_string(self).unwrap());
-        resp
-    }
-}
-
-pub struct HttpServer<State: Clone + Send + Sync + 'static> {
+pub struct ActixHttpServer<
+    State: Clone + Send + Sync + 'static> {
     server_addr: String,
     port: u16,
     router_list: Vec<(Method, String, EndpointHandler<State>)>,
@@ -67,7 +25,8 @@ pub struct HttpServer<State: Clone + Send + Sync + 'static> {
 }
 
 #[cfg(feature = "openapi")]
-impl<T: Clone + Send + Sync + 'static> OpenApiServer for HttpServer<T> {
+impl<
+    State: Clone + Send + Sync + 'static> OpenApiServer for ActixHttpServer<State> {
     fn set_api_doc(&mut self, api_doc: OpenApi) {
         self.api_doc = Some(api_doc);
     }
@@ -85,7 +44,8 @@ impl<T: Clone + Send + Sync + 'static> OpenApiServer for HttpServer<T> {
     }
 }
 
-impl<State: 'static + Clone + Send + Sync> HttpServer<State> {
+impl<
+    State: 'static + Clone + Send + Sync> ActixHttpServer<State> {
     pub fn new(state: State, server_addr: impl Into<String>, port: u16) -> Self {
         Self {
             server_addr: server_addr.into(),
@@ -161,13 +121,13 @@ impl<State: 'static + Clone + Send + Sync> HttpServer<State> {
         Ok(())
     }
 
-    pub fn at(self: &mut Self, path: &str) -> super::router::Route<State> {
-        super::router::Route::new(path.to_string(), self.state.clone(), &mut self.router_list)
+    pub fn at(self: &mut Self, path: &str) -> super::router::ActixRoute<State> {
+        super::router::ActixRoute::new(path.to_string(), self.state.clone(), &mut self.router_list)
     }
 
-    pub fn attach_to_actix_app<T>(&self, mut app: App<T>) -> App<T>
+    pub fn attach_to_actix_app<F>(&self, mut app: App<F>) -> App<F>
         where
-            T: ServiceFactory<ServiceRequest, Config = (), Error = Error, InitError = ()> {
+            F: ServiceFactory<ServiceRequest, Config = (), Error = Error, InitError = ()> {
 
         for (method, path, handler) in self.router_list.iter() {
             let handler = handler.clone();
@@ -216,7 +176,7 @@ mod test_actix {
     use actix_web::http::StatusCode;
     use actix_web::body::BoxBody;
     use serde::{Deserialize, Serialize};
-    use crate::actix_server::{HttpServer, Request, Response};
+    use crate::actix_server::{ActixHttpServer, ActixRequest, ActixResponse};
     #[cfg(feature = "openapi")]
     use utoipa::ToSchema;
     #[cfg(feature = "openapi")]
@@ -227,6 +187,7 @@ mod test_actix {
     use crate::add_openapi_item;
     #[cfg(feature = "openapi")]
     use crate as sfo_http;
+    use crate::http_server::{Request, Response, Route};
     #[cfg(feature = "openapi")]
     use crate::openapi::OpenApiServer;
 
@@ -251,7 +212,7 @@ mod test_actix {
 
     #[actix_web::test]
     async fn test() {
-        let mut server = HttpServer::new((), "127.0.0.1", 8080);
+        let mut server = ActixHttpServer::<>::new((), "127.0.0.1", 8080);
 
         #[cfg(feature = "openapi")]
         {
@@ -273,13 +234,13 @@ mod test_actix {
                 )
             )]
         }
-        server.at("/test1/{name}").get(|req: Request<()>| {
+        server.at("/test1/{name}").get(|req: ActixRequest<()>| {
             async move {
                 let name = req.param("name").unwrap();
                 println!("{}", name);
 
-                let mut resp = Response::new(StatusCode::OK);
-                resp.set_body("test");
+                let mut resp = ActixResponse::new(StatusCode::OK);
+                resp.set_body("test".as_bytes().to_owned());
                 Ok(resp)
             }
         });
@@ -302,14 +263,14 @@ mod test_actix {
                 request_body = Test,
             )]
         }
-        server.at("/test2").post(|mut req: Request<()>| {
+        server.at("/test2").post(|mut req: ActixRequest<()>| {
             async move {
                 let t: Test = req.query().unwrap();
                 let t2: Test = req.body_json().await.unwrap();
 
-                let mut resp = Response::new(StatusCode::OK);
-                resp.set_body(serde_json::to_string(&t).unwrap());
-                resp.set_body(serde_json::to_string(&t2).unwrap());
+                let mut resp = ActixResponse::new(StatusCode::OK);
+                resp.set_body(serde_json::to_string(&t).unwrap().as_bytes().to_owned());
+                resp.set_body(serde_json::to_string(&t2).unwrap().as_bytes().to_owned());
                 Ok(resp)
             }
         });
