@@ -6,8 +6,9 @@ macro_rules! def_openapi {
         fn $name() {}
     };
 }
-pub use utoipa::*;
+pub use utoipa;
 pub use paste::paste;
+use utoipa::{openapi, Path, ToSchema};
 use utoipa::openapi::path::PathItemBuilder;
 use utoipa::openapi::PathItem;
 
@@ -16,21 +17,21 @@ macro_rules! add_openapi_item {
     ($api_doc: expr, $name: ident) => {
         sfo_http::openapi::paste! {
             {
-                use sfo_http::openapi::Path;
+                use sfo_http::openapi::utoipa::Path;
                 #[allow(non_camel_case_types)]
                 struct [<___path_ $name>];
                 #[allow(non_camel_case_types)]
-                impl sfo_http::openapi::__dev::PathConfig for [<___path_ $name>] {
+                impl sfo_http::openapi::utoipa::__dev::PathConfig for [<___path_ $name>] {
                     fn path() -> String {
                         [<__path_ $name>]::path()
                     }
-                    fn methods() -> Vec<sfo_http::openapi::openapi::path::HttpMethod> {
+                    fn methods() -> Vec<sfo_http::openapi::utoipa::openapi::path::HttpMethod> {
                         [<__path_ $name>]::methods()
                     }
-                    fn tags_and_operation() -> (Vec<&'static str>, sfo_http::openapi::openapi::path::Operation)
+                    fn tags_and_operation() -> (Vec<&'static str>, sfo_http::openapi::utoipa::openapi::path::Operation)
                     {
                         let item = [<__path_ $name>]::operation();
-                        let mut tags = <[<__path_ $name>] as sfo_http::openapi::__dev::Tags>::tags();
+                        let mut tags = <[<__path_ $name>] as sfo_http::openapi::utoipa::__dev::Tags>::tags();
                         if !"".is_empty() && tags.is_empty() {
                             tags.push("");
                         }

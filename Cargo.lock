@@ -2665,7 +2665,7 @@ dependencies = [
 
 [[package]]
 name = "sfo-http"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "actix-files",
  "actix-web",

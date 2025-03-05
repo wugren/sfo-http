@@ -16,3 +16,4 @@ pub mod openapi;
 #[cfg(feature = "hash_sign")]
 pub mod hash_sign;
 pub mod http_server;
+pub use http;

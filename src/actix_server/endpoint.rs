@@ -8,7 +8,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use actix_files::NamedFile;
 use actix_web::{FromRequest, Handler, HttpMessage, HttpRequest, HttpResponse, Responder, web};
-use actix_web::body::BoxBody;
+use actix_web::body::{BodySize, BoxBody, MessageBody};
 use actix_web::dev::{Payload, Service, ServiceRequest, ServiceResponse, Url};
 use actix_web::http::{Method, StatusCode, Version};
 use async_trait::async_trait;
@@ -17,7 +17,6 @@ use futures_util::{StreamExt, TryStreamExt};
 use http::{HeaderName, HeaderValue};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use crate::actix_server::body::{BodySize, MessageBody};
 use crate::errors::{ErrorCode, http_err, HttpError, HttpResult, into_http_err};
 use crate::http_server::{Endpoint, Request, Response};
 

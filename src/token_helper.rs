@@ -2,6 +2,7 @@ use std::time::Duration;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 pub use jsonwebtoken::*;
+pub use chrono;
 
 pub type TokenResult<T> = errors::Result<T>;
 
@@ -68,5 +69,66 @@ impl JsonWebToken {
         val.validate_exp = true;
         let token_data: TokenData<Payload<T>> = jsonwebtoken::decode(token, key, &val)?;
         Ok(token_data.claims)
+    }
+}
+
+pub struct JWTBuilder<T: Serialize> {
+    payload: Payload<T>
+}
+
+impl<T: Serialize> JWTBuilder<T> {
+    pub fn new(data: T) -> Self {
+        Self {
+            payload: Payload {
+                iss: None,
+                exp: None,
+                sub: None,
+                aud: None,
+                nbf: None,
+                iat: None,
+                jti: None,
+                data,
+            }
+        }
+    }
+
+    pub fn iss(mut self, iss: String) -> Self {
+        self.payload.iss = Some(iss);
+        self
+    }
+
+    pub fn exp(mut self, exp: DateTime<Utc>) -> Self {
+        self.payload.exp = Some(exp.timestamp() as u64);
+        self
+    }
+
+    pub fn sub(mut self, sub: String) -> Self {
+        self.payload.sub = Some(sub);
+        self
+    }
+
+    pub fn aud(mut self, aud: String) -> Self {
+        self.payload.aud = Some(aud);
+        self
+    }
+
+    pub fn nbf(mut self, nbf: DateTime<Utc>) -> Self {
+        self.payload.nbf = Some(nbf.timestamp() as u64);
+        self
+    }
+
+    pub fn iat(mut self, iat: DateTime<Utc>) -> Self {
+        self.payload.iat = Some(iat.timestamp() as u64);
+        self
+    }
+
+    pub fn jti(mut self, jti: u64) -> Self {
+        self.payload.jti = Some(jti);
+        self
+    }
+
+    pub fn build(self, alg: Algorithm, key: &EncodingKey) -> TokenResult<String> {
+        let header = Header::new(alg);
+        jsonwebtoken::encode(&header, &self.payload, key)
     }
 }
