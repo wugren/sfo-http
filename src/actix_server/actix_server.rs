@@ -1,5 +1,6 @@
 use std::fmt::Debug;
 use std::future::Future;
+use std::path::Path;
 use std::sync::Arc;
 use crate::errors::{ErrorCode, HttpResult, into_http_err};
 use actix_web::dev::{fn_factory, ServiceFactory, ServiceRequest};
@@ -8,9 +9,8 @@ use actix_web::{web, App, Error, HttpResponse, Responder};
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "openapi")]
 use utoipa::openapi::OpenApi;
-use crate::actix_server::{EndpointHandler, ActixRequest, ActixResponse};
-use crate::actix_server::router::ActixRoute;
-use crate::http_server::{HttpServer, Response};
+use crate::actix_server::{EndpointHandler, ActixRequest, ActixResponse, ServeDir, ServeFile};
+use crate::http_server::{Endpoint, HttpMethod, HttpServer, Response};
 #[cfg(feature = "openapi")]
 use crate::openapi::OpenApiServer;
 
@@ -163,9 +163,27 @@ impl ActixHttpServer {
     }
 }
 
-impl<'a> HttpServer<'a, ActixRequest, ActixResponse, ActixRoute<'a>> for ActixHttpServer {
-    fn at(&'a mut self, path: &str) -> ActixRoute<'a> {
-        super::router::ActixRoute::new(path.to_string(), &mut self.router_list)
+impl HttpServer<ActixRequest, ActixResponse> for ActixHttpServer {
+    fn serve(&mut self, path: &str, method: HttpMethod, ep: impl Endpoint<ActixRequest, ActixResponse>) {
+        let method = match method {
+            HttpMethod::GET => Method::GET,
+            HttpMethod::POST => Method::POST,
+            HttpMethod::PUT => Method::PUT,
+            HttpMethod::DELETE => Method::DELETE,
+        };
+        self.router_list.push((method, path.to_string(), EndpointHandler::new(ep)));
+    }
+
+    fn serve_dir(&mut self, path: &str, dir: impl AsRef<Path>) -> HttpResult<()> {
+        let dir = dir.as_ref().to_path_buf().canonicalize()
+            .map_err(into_http_err!(crate::errors::ErrorCode::IOError, "serve_dir failed"))?;
+        self.router_list.push((Method::GET, format!("{}/{{tail:.*}}", path), EndpointHandler::new(ServeDir::new(path.to_string(), dir))));
+        Ok(())
+    }
+
+    fn serve_file(&mut self, path: &str, file: impl AsRef<Path>) -> HttpResult<()> {
+        self.router_list.push((Method::GET, path.to_string(), EndpointHandler::new(ServeFile::init(file.as_ref().to_path_buf())?)));
+        Ok(())
     }
 }
 
@@ -185,7 +203,7 @@ mod test_actix {
     use crate::add_openapi_item;
     #[cfg(feature = "openapi")]
     use crate as sfo_http;
-    use crate::http_server::{HttpServer, Request, Response, Route};
+    use crate::http_server::{HttpMethod, HttpServer, Request, Response};
     #[cfg(feature = "openapi")]
     use crate::openapi::OpenApiServer;
 
@@ -232,7 +250,7 @@ mod test_actix {
                 )
             )]
         }
-        server.at("/test1/{name}").get(|req: ActixRequest| {
+        server.serve("/test1/{name}", HttpMethod::GET,|req: ActixRequest| {
             async move {
                 let name = req.param("name").unwrap();
                 println!("{}", name);
@@ -261,7 +279,7 @@ mod test_actix {
                 request_body = Test,
             )]
         }
-        server.at("/test2").post(|mut req: ActixRequest| {
+        server.serve("/test2", HttpMethod::POST,|mut req: ActixRequest| {
             async move {
                 let t: Test = req.query().unwrap();
                 let t2: Test = req.body_json().await.unwrap();
@@ -278,7 +296,7 @@ mod test_actix {
             add_openapi_item!(server1, test2);
         }
 
-        server.at("/test3").serve_dir(".").unwrap();
+        server.serve_dir("/test3", ".").unwrap();
         println!("listening on 127.0.0.1:8080");
 
 

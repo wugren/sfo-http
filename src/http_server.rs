@@ -75,15 +75,15 @@ where
     }
 }
 
-pub trait Route<Req: Request, Resp: Response> {
-    fn get(&mut self, ep: impl Endpoint<Req, Resp>) -> &mut Self;
-    fn post(&mut self, ep: impl Endpoint<Req, Resp>) -> &mut Self;
-    fn put(&mut self, ep: impl Endpoint<Req, Resp>) -> &mut Self;
-    fn delete(&mut self, ep: impl Endpoint<Req, Resp>) -> &mut Self;
-    fn serve_dir(&mut self, dir: impl AsRef<Path>) -> HttpResult<&mut Self>;
-    fn serve_file(&mut self, file: impl AsRef<Path>) -> HttpResult<&mut Self>;
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum HttpMethod {
+    GET,
+    POST,
+    PUT,
+    DELETE
 }
-
-pub trait HttpServer<'a, Req: Request, Resp: Response, R: 'a + Route<Req, Resp>> {
-    fn at(&'a mut self, path: &str) -> R;
+pub trait HttpServer< Req: Request, Resp: Response> {
+    fn serve(&mut self, path: &str, method: HttpMethod, ep: impl Endpoint<Req, Resp>);
+    fn serve_dir(&mut self, path: &str, dir: impl AsRef<Path>) -> HttpResult<()>;
+    fn serve_file(&mut self, path: &str, file: impl AsRef<Path>) -> HttpResult<()>;
 }

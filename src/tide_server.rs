@@ -17,7 +17,7 @@ use tide::Server;
 #[cfg(feature = "openapi")]
 use utoipa::openapi::{OpenApi, PathItem};
 use crate::errors::{ErrorCode, http_err, HttpResult, into_http_err};
-use crate::http_server::{Endpoint, HttpServer, Request, Response, Route};
+use crate::http_server::{Endpoint, HttpMethod, HttpServer, Request, Response};
 #[cfg(feature = "openapi")]
 use crate::openapi::OpenApiServer;
 
@@ -218,77 +218,6 @@ impl Future for TideEndpoint {
     }
 }
 
-pub struct TideRoute<'a> {
-    route: tide::Route<'a, ()>,
-}
-
-impl<'a> TideRoute<'a> {
-    pub fn new(route: tide::Route<'a, ()>) -> Self {
-        Self {
-            route
-        }
-    }
-}
-impl<'a> Route<TideRequest, TideResponse> for TideRoute<'a> {
-    fn get(&mut self, ep: impl Endpoint<TideRequest, TideResponse>) -> &mut Self {
-        let ep = Arc::new(ep);
-        self.route.get(move |req| {
-            let ep = ep.clone();
-            let req = TideRequest::new(req);
-            TideEndpoint::new(ep, req)
-            // async move {
-            //     let req = TideRequest::new(req);
-            //     let resp = match ep.call(req).await {
-            //         Ok(resp) => resp,
-            //         Err(err) => return Err(tide::Error::new(tide::StatusCode::BadRequest, err))
-            //     };
-            //     Ok(resp.resp)
-            // }
-        });
-        self
-    }
-
-    fn post(&mut self, ep: impl Endpoint<TideRequest, TideResponse>) -> &mut Self {
-        let ep = Arc::new(ep);
-        self.route.post(move |req| {
-            let ep = ep.clone();
-            let req = TideRequest::new(req);
-            TideEndpoint::new(ep, req)
-        });
-        self
-    }
-
-    fn put(&mut self, ep: impl Endpoint<TideRequest, TideResponse>) -> &mut Self {
-        let ep = Arc::new(ep);
-        self.route.put(move |req| {
-            let ep = ep.clone();
-            let req = TideRequest::new(req);
-            TideEndpoint::new(ep, req)
-        });
-        self
-    }
-
-    fn delete(&mut self, ep: impl Endpoint<TideRequest, TideResponse>) -> &mut Self {
-        let ep = Arc::new(ep);
-        self.route.delete(move |req| {
-            let ep = ep.clone();
-            let req = TideRequest::new(req);
-            TideEndpoint::new(ep, req)
-        });
-        self
-    }
-
-    fn serve_dir(&mut self, dir: impl AsRef<Path>) -> HttpResult<&mut Self> {
-        self.route.serve_dir(dir).map_err(into_http_err!(ErrorCode::ServerError));
-        Ok(self)
-    }
-
-    fn serve_file(&mut self, file: impl AsRef<Path>) -> HttpResult<&mut Self> {
-        self.route.serve_file(file).map_err(into_http_err!(ErrorCode::ServerError));
-        Ok(self)
-    }
-}
-
 pub struct TideHttpServer {
     app: Server<()>,
     server_addr: String,
@@ -396,9 +325,48 @@ impl TideHttpServer {
     }
 }
 
-impl<'a> HttpServer<'a, TideRequest, TideResponse, TideRoute<'a>> for TideHttpServer {
-    fn at(&'a mut self, path: &str) -> TideRoute<'a> {
-        TideRoute::new(self.app.at(path))
+impl HttpServer<TideRequest, TideResponse> for TideHttpServer {
+    fn serve(&mut self, path: &str, method: HttpMethod, ep: impl Endpoint<TideRequest, TideResponse>) {
+        let ep = Arc::new(ep);
+        match method {
+            HttpMethod::GET => {
+                self.app.at(path).get(move |req| {
+                    let ep = ep.clone();
+                    let req = TideRequest::new(req);
+                    TideEndpoint::new(ep, req)
+                });
+            }
+            HttpMethod::POST => {
+                self.app.at(path).post(move |req| {
+                    let ep = ep.clone();
+                    let req = TideRequest::new(req);
+                    TideEndpoint::new(ep, req)
+                });
+            }
+            HttpMethod::PUT => {
+                self.app.at(path).put(move |req| {
+                    let ep = ep.clone();
+                    let req = TideRequest::new(req);
+                    TideEndpoint::new(ep, req)
+                });
+            }
+            HttpMethod::DELETE => {
+                self.app.at(path).delete(move |req| {
+                    let ep = ep.clone();
+                    let req = TideRequest::new(req);
+                    TideEndpoint::new(ep, req)
+                });
+            }
+        }
+
+    }
+
+    fn serve_dir(&mut self, path: &str, dir: impl AsRef<Path>) -> HttpResult<()> {
+        self.app.at(path).serve_dir(dir).map_err(into_http_err!(ErrorCode::ServerError))
+    }
+
+    fn serve_file(&mut self, path: &str, file: impl AsRef<Path>) -> HttpResult<()> {
+        self.app.at(path).serve_file(file).map_err(into_http_err!(ErrorCode::ServerError))
     }
 }
 
@@ -416,7 +384,7 @@ mod test_tide {
     use crate::add_openapi_item;
     #[cfg(feature = "openapi")]
     use crate as sfo_http;
-    use crate::http_server::{HttpServer, Request, Response, Route};
+    use crate::http_server::{HttpMethod, HttpServer, Request, Response};
     #[cfg(feature = "openapi")]
     use crate::openapi::OpenApiServer;
     use crate::tide_server::{TideHttpServer, TideRequest, TideResponse};
@@ -464,7 +432,7 @@ mod test_tide {
                 )
             )]
         }
-        server.at("/test1/:name").get(|req: TideRequest| {
+        server.serve("/test1/:name", HttpMethod::GET, |req: TideRequest| {
             async move {
                 let name = req.param("name").unwrap();
                 println!("{}", name);
@@ -494,7 +462,7 @@ mod test_tide {
                 request_body = Test,
             )]
         }
-        server.at("/test2").post(|mut req: TideRequest| {
+        server.serve("/test2", HttpMethod::POST, |mut req: TideRequest| {
             async move {
                 let t: Test = req.query().unwrap();
                 let t2: Test = req.body_json().await.unwrap();
@@ -511,7 +479,7 @@ mod test_tide {
             add_openapi_item!(server1, test2);
         }
 
-        server.at("/test3").serve_dir(".").unwrap();
+        server.serve_dir("/test3", ".").unwrap();
         println!("listening on 127.0.0.1:8081");
 
 

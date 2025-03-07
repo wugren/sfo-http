@@ -1,6 +1,5 @@
 mod actix_server;
 mod endpoint;
-mod router;
 
 use actix_web::http::header::COOKIE;
 pub use actix_server::*;
