@@ -256,8 +256,10 @@ impl TideHttpServer {
                     .parse::<tide::http::headers::HeaderValue>()
                     .unwrap(),
             )
-            .allow_origin(Origin::from(allow_origin.unwrap_or(vec!["*".to_string()])))
             .allow_credentials(true);
+        if allow_origin.is_some() {
+            cors = cors.allow_origin(Origin::from(allow_origin.unwrap()));
+        }
         if allow_headers.is_some() {
             cors = cors.allow_headers(allow_headers.as_ref().unwrap().as_str().parse::<tide::http::headers::HeaderValue>().unwrap())
                 .expose_headers(allow_headers.as_ref().unwrap().as_str().parse::<tide::http::headers::HeaderValue>().unwrap());
@@ -272,6 +274,10 @@ impl TideHttpServer {
             api_doc: None,
             enable_api_doc: true,
         }
+    }
+
+    pub fn app(&mut self) -> &mut Server<()> {
+        &mut self.app
     }
 
     pub async fn run(mut self) -> HttpResult<()> {

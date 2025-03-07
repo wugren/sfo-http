@@ -2,6 +2,7 @@ use std::fmt::Debug;
 use std::future::Future;
 use std::path::Path;
 use std::sync::Arc;
+use actix_cors::Cors;
 use crate::errors::{ErrorCode, HttpResult, into_http_err};
 use actix_web::dev::{fn_factory, ServiceFactory, ServiceRequest};
 use actix_web::http::{Method, StatusCode};
@@ -21,6 +22,8 @@ pub struct ActixHttpServer {
     #[cfg(feature = "openapi")]
     api_doc: Option<utoipa::openapi::OpenApi>,
     enable_api_doc: bool,
+    allow_origin: Option<Vec<String>>,
+    allow_headers: Option<Vec<String>>,
 }
 
 #[cfg(feature = "openapi")]
@@ -43,7 +46,7 @@ impl OpenApiServer for ActixHttpServer {
 }
 
 impl ActixHttpServer {
-    pub fn new(server_addr: impl Into<String>, port: u16) -> Self {
+    pub fn new(server_addr: impl Into<String>, port: u16, allow_origin: Option<Vec<String>>, allow_headers: Option<Vec<String>>) -> Self {
         Self {
             server_addr: server_addr.into(),
             port,
@@ -51,18 +54,32 @@ impl ActixHttpServer {
             #[cfg(feature = "openapi")]
             api_doc: None,
             enable_api_doc: false,
+            allow_origin,
+            allow_headers,
         }
     }
 
-    pub async fn run(self) -> HttpResult<()> {
+    pub async fn run(mut self) -> HttpResult<()> {
         let addr = format!("{}:{}", self.server_addr, self.port);
         ::log::info!("start http server:{}", addr);
         let router_list = self.router_list;
         #[cfg(feature = "openapi")]
         let api_doc = self.api_doc.clone();
-
+        let allow_origin = self.allow_origin.take();
+        let allow_headers = self.allow_headers.take();
         actix_web::HttpServer::new(move || {
-            let mut app = actix_web::App::new();
+            let mut cors = Cors::default().allow_any_method();
+            if allow_origin.is_some() {
+                for origin in allow_origin.as_ref().unwrap() {
+                    cors = cors.allowed_origin(origin);
+                }
+            }
+            if allow_headers.is_some() {
+                cors = cors.allowed_headers(allow_headers.as_ref().unwrap());
+                cors = cors.expose_headers(allow_headers.as_ref().unwrap());
+            }
+            cors = cors.supports_credentials();
+            let mut app = actix_web::App::new().wrap(cors);
             for (method, path, handler) in router_list.iter() {
                 let handler = handler.clone();
                 if method == &Method::PUT {
@@ -154,10 +171,19 @@ impl ActixHttpServer {
             }
         }
         #[cfg(feature = "openapi")]
-        {
-            if self.api_doc.is_some() {
-                app = app.service(utoipa_swagger_ui::SwaggerUi::new("/swagger-ui/{_:.*}").url("/api-docs/openapi.json", self.api_doc.clone().unwrap()));
+        {{
+            let api_doc = self.api_doc.clone();
+            if self.enable_api_doc && api_doc.is_some() {
+                app = app.service(utoipa_swagger_ui::SwaggerUi::new("/doc/{_:.*}").url("/api-docs/openapi.json", api_doc.unwrap()));
+                async fn doc() -> impl Responder {
+                    HttpResponse::Found()
+                        .append_header(("Location", "/doc/"))
+                        .finish()
+                }
+
+                app = app.route("/doc", web::get().to(doc));
             }
+        }
         }
         app
     }
@@ -228,7 +254,7 @@ mod test_actix {
 
     #[actix_web::test]
     async fn test() {
-        let mut server = ActixHttpServer::<>::new("127.0.0.1", 8080);
+        let mut server = ActixHttpServer::<>::new("127.0.0.1", 8080, None, None);
 
         #[cfg(feature = "openapi")]
         {
