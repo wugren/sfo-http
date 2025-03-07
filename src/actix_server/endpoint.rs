@@ -6,33 +6,32 @@ use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::task::Poll;
 use actix_files::NamedFile;
 use actix_web::{FromRequest, Handler, HttpMessage, HttpRequest, HttpResponse, Responder, web};
 use actix_web::body::{BodySize, BoxBody, MessageBody};
 use actix_web::dev::{Payload, Service, ServiceRequest, ServiceResponse, Url};
+use actix_web::error::PayloadError;
 use actix_web::http::{Method, StatusCode, Version};
+use actix_web::web::Bytes;
 use async_trait::async_trait;
 use futures_util::future::LocalBoxFuture;
 use futures_util::{StreamExt, TryStreamExt};
+use futures_util::stream::Next;
 use http::{HeaderName, HeaderValue};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use crate::errors::{ErrorCode, http_err, HttpError, HttpResult, into_http_err};
 use crate::http_server::{Endpoint, Request, Response};
 
-pub struct ActixRequest<State> {
-    state: State,
+pub struct ActixRequest {
     request: HttpRequest,
     payload: Option<Payload>,
 }
 
-impl<State> ActixRequest<State> {
+impl ActixRequest {
     pub fn request(&self) -> &HttpRequest {
         &self.request
-    }
-
-    pub fn state(&self) -> &State {
-        &self.state
     }
 
     pub fn method(&self) -> Method {
@@ -55,10 +54,52 @@ impl<State> ActixRequest<State> {
         }
     }
 
+    fn payload(&mut self) -> NextFuture {
+        NextFuture::new(self.payload.as_mut().unwrap().next())
+    }
+}
+
+struct NextFuture<'a> {
+    next: Next<'a, Payload>,
+}
+
+unsafe impl<'a> Send for NextFuture<'a> {}
+
+impl<'a> NextFuture<'a> {
+    fn new(next: Next<'a, Payload>) -> Self {
+        Self {
+            next,
+        }
+    }
+}
+
+impl<'a> Future for NextFuture<'a> {
+    type Output = Option<Result<Bytes, HttpError>>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Self::Output> {
+        match Pin::new(&mut self.next).poll(cx) {
+            Poll::Ready(ret) => {
+                match ret {
+                    Some(Ok(chunk)) => {
+                        Poll::Ready(Some(Ok(chunk)))
+                    }
+                    Some(Err(e)) => {
+                        Poll::Ready(Some(Err(http_err!(ErrorCode::IOError))))
+                    }
+                    None => {
+                        Poll::Ready(None)
+                    }
+                }
+            }
+            Poll::Pending => {
+                Poll::Pending
+            }
+        }
+    }
 }
 
 #[async_trait::async_trait(?Send)]
-impl<State: 'static> Request for ActixRequest<State> {
+impl Request for ActixRequest {
     fn peer_addr(&self) -> Option<String> {
         self.request.peer_addr().map(|addr| addr.to_string())
     }
@@ -242,9 +283,9 @@ impl ServeDir {
 }
 
 #[async_trait::async_trait(?Send)]
-impl<State: 'static> Endpoint<ActixRequest<State>, ActixResponse> for ServeDir
+impl Endpoint<ActixRequest, ActixResponse> for ServeDir
 {
-    async fn call(&self, req: ActixRequest<State>) -> HttpResult<ActixResponse> {
+    async fn call(&self, req: ActixRequest) -> HttpResult<ActixResponse> {
         let path = req.url().path();
         let path = path.strip_prefix(&self.prefix).unwrap();
         let path = path.trim_start_matches('/');
@@ -295,8 +336,8 @@ impl ServeFile {
 }
 
 #[async_trait(?Send)]
-impl<State: Clone + Send + Sync + 'static> Endpoint<ActixRequest<State>, ActixResponse> for ServeFile {
-    async fn call(&self, req: ActixRequest<State>) -> HttpResult<ActixResponse> {
+impl Endpoint<ActixRequest, ActixResponse> for ServeFile {
+    async fn call(&self, req: ActixRequest) -> HttpResult<ActixResponse> {
         match NamedFile::open_async(self.path.as_path()).await {
             Ok(file) => {
                 let resp = ActixResponse::from(file.into_response(req.request()));
@@ -311,30 +352,27 @@ impl<State: Clone + Send + Sync + 'static> Endpoint<ActixRequest<State>, ActixRe
     }
 }
 
-pub struct EndpointHandler<State: Clone + Send + Sync + 'static> {
-    ep: Pin<Arc<dyn Endpoint<ActixRequest<State>, ActixResponse>>>,
-    state: State,
+pub struct EndpointHandler {
+    ep: Pin<Arc<dyn Endpoint<ActixRequest, ActixResponse>>>,
 }
 
-impl<State: Clone + Send + Sync + 'static> EndpointHandler<State> {
-    pub fn new(state: State, ep: impl Endpoint<ActixRequest<State>, ActixResponse>) -> Self {
+impl EndpointHandler {
+    pub fn new(ep: impl Endpoint<ActixRequest, ActixResponse>) -> Self {
         Self {
             ep: Arc::pin(ep),
-            state,
         }
     }
 }
 
-impl<State: Clone + Send + Sync + 'static> Clone for EndpointHandler<State> {
+impl Clone for EndpointHandler {
     fn clone(&self) -> Self {
         Self {
             ep: self.ep.clone(),
-            state: self.state.clone(),
         }
     }
 }
 
-impl<State> Service<ServiceRequest> for EndpointHandler<State> where State: 'static + Clone + Send + Sync {
+impl Service<ServiceRequest> for EndpointHandler {
     type Response = ServiceResponse;
     type Error = actix_web::Error;
     type Future = LocalBoxFuture<'static, Result<Self::Response, Self::Error>>;
@@ -343,11 +381,9 @@ impl<State> Service<ServiceRequest> for EndpointHandler<State> where State: 'sta
 
     fn call(&self, req: ServiceRequest) -> Self::Future {
         let ep = self.ep.clone();
-        let state = self.state.clone();
         let fut = async move {
             let (http_req, payload) = req.into_parts();
             let req = ActixRequest {
-                state,
                 request: http_req.clone(),
                 payload: Some(payload),
             };

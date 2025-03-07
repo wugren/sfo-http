@@ -84,6 +84,6 @@ pub trait Route<Req: Request, Resp: Response> {
     fn serve_file(&mut self, file: impl AsRef<Path>) -> HttpResult<&mut Self>;
 }
 
-pub trait HttpServer<Req: Request, Resp: Response, R: Route<Req, Resp>> {
-    fn at(&mut self, path: &str) -> R;
+pub trait HttpServer<'a, Req: Request, Resp: Response, R: 'a + Route<Req, Resp>> {
+    fn at(&'a mut self, path: &str) -> R;
 }

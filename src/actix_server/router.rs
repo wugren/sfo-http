@@ -10,46 +10,40 @@ use crate::errors::{HttpResult, into_http_err};
 use crate::http_server::{Endpoint, Route};
 use super::{EndpointHandler, ActixResponse, ServeDir, ServeFile, ActixRequest};
 
-pub struct ActixRoute<'a, State: 'static + Clone + Send + Sync> {
+pub struct ActixRoute<'a> {
     path: String,
-    state: State,
-    route_list: &'a mut Vec<(Method, String, EndpointHandler<State>)>,
+    route_list: &'a mut Vec<(Method, String, EndpointHandler)>,
 }
 
-impl<'a, State> ActixRoute<'a, State>
-    where
-        State: 'static + Clone + Send + Sync, {
+impl<'a> ActixRoute<'a> {
     pub fn new(path: String,
-               state: State,
-               route_list: &'a mut Vec<(Method, String, EndpointHandler<State>)>,) -> ActixRoute<'a, State> {
+               route_list: &'a mut Vec<(Method, String, EndpointHandler)>,) -> ActixRoute<'a> {
         ActixRoute {
             path,
-            state,
             route_list,
         }
     }
 
 }
 
-impl<'a,
-    State: 'static + Clone + Send + Sync> Route<ActixRequest<State>, ActixResponse> for ActixRoute<'a, State> {
-    fn get(&mut self, ep: impl Endpoint<ActixRequest<State>, ActixResponse>) -> &mut Self {
-        self.route_list.push((Method::GET, self.path.clone(), EndpointHandler::new(self.state.clone(), ep)));
+impl<'a> Route<ActixRequest, ActixResponse> for ActixRoute<'a> {
+    fn get(&mut self, ep: impl Endpoint<ActixRequest, ActixResponse>) -> &mut Self {
+        self.route_list.push((Method::GET, self.path.clone(), EndpointHandler::new(ep)));
         self
     }
 
-    fn post(&mut self, ep: impl Endpoint<ActixRequest<State>, ActixResponse>) -> &mut Self {
-        self.route_list.push((Method::POST, self.path.clone(), EndpointHandler::new(self.state.clone(), ep)));
+    fn post(&mut self, ep: impl Endpoint<ActixRequest, ActixResponse>) -> &mut Self {
+        self.route_list.push((Method::POST, self.path.clone(), EndpointHandler::new(ep)));
         self
     }
 
-    fn put(&mut self, ep: impl Endpoint<ActixRequest<State>, ActixResponse>) -> &mut Self {
-        self.route_list.push((Method::PUT, self.path.clone(), EndpointHandler::new(self.state.clone(), ep)));
+    fn put(&mut self, ep: impl Endpoint<ActixRequest, ActixResponse>) -> &mut Self {
+        self.route_list.push((Method::PUT, self.path.clone(), EndpointHandler::new(ep)));
         self
     }
 
-    fn delete(&mut self, ep: impl Endpoint<ActixRequest<State>, ActixResponse>) -> &mut Self {
-        self.route_list.push((Method::DELETE, self.path.clone(), EndpointHandler::new(self.state.clone(), ep)));
+    fn delete(&mut self, ep: impl Endpoint<ActixRequest, ActixResponse>) -> &mut Self {
+        self.route_list.push((Method::DELETE, self.path.clone(), EndpointHandler::new(ep)));
         self
     }
 
@@ -57,12 +51,12 @@ impl<'a,
         let dir = dir.as_ref().to_path_buf().canonicalize()
             .map_err(into_http_err!(crate::errors::ErrorCode::IOError, "serve_dir failed"))?;
         let prefix = self.path.clone();
-        self.route_list.push((Method::GET, format!("{}/{{tail:.*}}", prefix.clone()), EndpointHandler::new(self.state.clone(), ServeDir::new(prefix, dir))));
+        self.route_list.push((Method::GET, format!("{}/{{tail:.*}}", prefix.clone()), EndpointHandler::new(ServeDir::new(prefix, dir))));
         Ok(self)
     }
 
     fn serve_file(&mut self, file: impl AsRef<Path>) -> HttpResult<&mut Self> {
-        self.route_list.push((Method::GET, self.path.clone(), EndpointHandler::new(self.state.clone(), ServeFile::init(file.as_ref().to_path_buf())?)));
+        self.route_list.push((Method::GET, self.path.clone(), EndpointHandler::new(ServeFile::init(file.as_ref().to_path_buf())?)));
         Ok(self)
     }
 }

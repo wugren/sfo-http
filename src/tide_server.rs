@@ -1,27 +1,32 @@
 use std::fmt::Debug;
+use std::future::Future;
 use std::ops::{Deref, DerefMut};
+use std::path::Path;
+use std::pin::Pin;
 use std::slice::Iter;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 use http::header::COOKIE;
 use serde::{Deserialize, Serialize};
 use serde::de::DeserializeOwned;
 use serde_json::json;
+use serde_json::ser::State;
 use tide::security::{CorsMiddleware, Origin};
 use tide::http::Mime;
 use tide::Server;
 #[cfg(feature = "openapi")]
 use utoipa::openapi::{OpenApi, PathItem};
 use crate::errors::{ErrorCode, http_err, HttpResult, into_http_err};
-use crate::http_server::{HttpServer, Request, Response};
+use crate::http_server::{Endpoint, HttpServer, Request, Response, Route};
 #[cfg(feature = "openapi")]
 use crate::openapi::OpenApiServer;
 
-pub struct TideRequest<State> {
-    req: tide::Request<State>,
+pub struct TideRequest {
+    req: tide::Request<()>,
 }
 
-impl<State> TideRequest<State> {
-    pub fn new(req: tide::Request<State>) -> Self {
+impl TideRequest {
+    pub fn new(req: tide::Request<()>) -> Self {
         Self {
             req
         }
@@ -29,7 +34,7 @@ impl<State> TideRequest<State> {
 }
 
 #[async_trait::async_trait(?Send)]
-impl<State: 'static> crate::http_server::Request for TideRequest<State> {
+impl crate::http_server::Request for TideRequest {
     fn peer_addr(&self) -> Option<String> {
         self.req.peer_addr().map(ToString::to_string)
     }
@@ -99,6 +104,7 @@ impl<State: 'static> crate::http_server::Request for TideRequest<State> {
         self.req.body_form().await.map_err(|e| http_err!(ErrorCode::InvalidData, "{}", e))
     }
 }
+unsafe impl Send for TideRequest {}
 
 #[derive(Serialize, Deserialize)]
 struct HttpJsonResult<T>
@@ -164,8 +170,127 @@ impl crate::http_server::Response for TideResponse {
     }
 }
 
-pub struct TideHttpServer<T> {
-    app: Server<T>,
+unsafe impl Send for TideResponse {}
+
+struct TideEndpoint {
+    ep: Arc<dyn Endpoint<TideRequest, TideResponse>>,
+    req: Option<TideRequest>,
+    future: Option<Pin<Box<dyn Future<Output = HttpResult<TideResponse>>>>>,
+}
+
+impl TideEndpoint {
+    pub fn new(ep: Arc<dyn Endpoint<TideRequest, TideResponse>>, req: TideRequest) -> Self {
+        Self {
+            ep,
+            req: Some(req),
+            future: None,
+        }
+    }
+}
+
+unsafe impl Send for TideEndpoint {}
+
+impl Future for TideEndpoint {
+    type Output = tide::Result<tide::Response>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        if self.future.is_none() {
+            let req = self.req.take().unwrap();
+            let this: &'static mut Self = unsafe { std::mem::transmute(self.as_mut().get_unchecked_mut()) };
+            let future = Box::pin(this.ep.call(req));
+            self.as_mut().future = Some(future);
+        }
+        match Pin::new(self.future.as_mut().unwrap()).poll(cx) {
+            Poll::Ready(ret) => {
+                match ret {
+                    Ok(resp) => {
+                        Poll::Ready(Ok(resp.resp))
+                    }
+                    Err(err) => {
+                        Poll::Ready(Err(tide::Error::new(tide::StatusCode::BadRequest, err)))
+                    }
+                }
+            }
+            Poll::Pending => {
+                Poll::Pending
+            }
+        }
+    }
+}
+
+pub struct TideRoute<'a> {
+    route: tide::Route<'a, ()>,
+}
+
+impl<'a> TideRoute<'a> {
+    pub fn new(route: tide::Route<'a, ()>) -> Self {
+        Self {
+            route
+        }
+    }
+}
+impl<'a> Route<TideRequest, TideResponse> for TideRoute<'a> {
+    fn get(&mut self, ep: impl Endpoint<TideRequest, TideResponse>) -> &mut Self {
+        let ep = Arc::new(ep);
+        self.route.get(move |req| {
+            let ep = ep.clone();
+            let req = TideRequest::new(req);
+            TideEndpoint::new(ep, req)
+            // async move {
+            //     let req = TideRequest::new(req);
+            //     let resp = match ep.call(req).await {
+            //         Ok(resp) => resp,
+            //         Err(err) => return Err(tide::Error::new(tide::StatusCode::BadRequest, err))
+            //     };
+            //     Ok(resp.resp)
+            // }
+        });
+        self
+    }
+
+    fn post(&mut self, ep: impl Endpoint<TideRequest, TideResponse>) -> &mut Self {
+        let ep = Arc::new(ep);
+        self.route.post(move |req| {
+            let ep = ep.clone();
+            let req = TideRequest::new(req);
+            TideEndpoint::new(ep, req)
+        });
+        self
+    }
+
+    fn put(&mut self, ep: impl Endpoint<TideRequest, TideResponse>) -> &mut Self {
+        let ep = Arc::new(ep);
+        self.route.put(move |req| {
+            let ep = ep.clone();
+            let req = TideRequest::new(req);
+            TideEndpoint::new(ep, req)
+        });
+        self
+    }
+
+    fn delete(&mut self, ep: impl Endpoint<TideRequest, TideResponse>) -> &mut Self {
+        let ep = Arc::new(ep);
+        self.route.delete(move |req| {
+            let ep = ep.clone();
+            let req = TideRequest::new(req);
+            TideEndpoint::new(ep, req)
+        });
+        self
+    }
+
+    fn serve_dir(&mut self, dir: impl AsRef<Path>) -> HttpResult<&mut Self> {
+        self.route.serve_dir(dir).map_err(into_http_err!(ErrorCode::ServerError));
+        Ok(self)
+    }
+
+    fn serve_file(&mut self, file: impl AsRef<Path>) -> HttpResult<&mut Self> {
+        self.route.serve_file(file).map_err(into_http_err!(ErrorCode::ServerError));
+        Ok(self)
+    }
+}
+
+pub struct TideHttpServer {
+    app: Server<()>,
     server_addr: String,
     port: u16,
     #[cfg(feature = "openapi")]
@@ -174,7 +299,7 @@ pub struct TideHttpServer<T> {
 }
 
 #[cfg(feature = "openapi")]
-impl<T: Clone + Send + Sync + 'static> OpenApiServer for TideHttpServer<T> {
+impl OpenApiServer for TideHttpServer {
     fn set_api_doc(&mut self, api_doc: OpenApi) {
         self.api_doc = Some(api_doc);
     }
@@ -192,9 +317,9 @@ impl<T: Clone + Send + Sync + 'static> OpenApiServer for TideHttpServer<T> {
     }
 }
 
-impl<T: Clone + Send + Sync + 'static> TideHttpServer<T> {
-    pub fn new(state: T, server_addr: String, port: u16, allow_origin: Option<Vec<String>>, allow_headers: Option<String>, ) -> Self {
-        let mut app = tide::with_state(state);
+impl TideHttpServer {
+    pub fn new(server_addr: String, port: u16, allow_origin: Option<Vec<String>>, allow_headers: Option<String>, ) -> Self {
+        let mut app = tide::with_state(());
 
         let mut cors = CorsMiddleware::new()
             .allow_methods(
@@ -271,16 +396,127 @@ impl<T: Clone + Send + Sync + 'static> TideHttpServer<T> {
     }
 }
 
-impl<T> Deref for TideHttpServer<T> {
-    type Target = Server<T>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.app
+impl<'a> HttpServer<'a, TideRequest, TideResponse, TideRoute<'a>> for TideHttpServer {
+    fn at(&'a mut self, path: &str) -> TideRoute<'a> {
+        TideRoute::new(self.app.at(path))
     }
 }
 
-impl<T> DerefMut for TideHttpServer<T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.app
+#[cfg(test)]
+mod test_tide {
+    use http::StatusCode;
+    use serde::{Deserialize, Serialize};
+    #[cfg(feature = "openapi")]
+    use utoipa::ToSchema;
+    #[cfg(feature = "openapi")]
+    use crate::def_openapi;
+    #[cfg(feature = "openapi")]
+    use utoipa::OpenApi;
+    #[cfg(feature = "openapi")]
+    use crate::add_openapi_item;
+    #[cfg(feature = "openapi")]
+    use crate as sfo_http;
+    use crate::http_server::{HttpServer, Request, Response, Route};
+    #[cfg(feature = "openapi")]
+    use crate::openapi::OpenApiServer;
+    use crate::tide_server::{TideHttpServer, TideRequest, TideResponse};
+
+    #[cfg(feature = "openapi")]
+    #[derive(Deserialize, Serialize, ToSchema)]
+    pub struct Test {
+        a: String,
+        b: u16
+    }
+
+    #[cfg(not(feature = "openapi"))]
+    #[derive(Deserialize, Serialize)]
+    pub struct Test {
+        a: String,
+        b: u16
+    }
+
+    #[cfg(feature = "openapi")]
+    #[derive(utoipa::OpenApi)]
+    #[openapi(paths(), components())]
+    struct ApiDoc;
+
+    #[actix_web::test]
+    async fn test() {
+        let mut server = TideHttpServer::<>::new("127.0.0.1".to_string(), 8081, None, None);
+
+        #[cfg(feature = "openapi")]
+        {
+            let openapi = ApiDoc::openapi();
+            server.set_api_doc(openapi);
+        }
+
+        #[cfg(feature = "openapi")]
+        def_openapi! {
+            [test1]
+            #[utoipa::path(
+                get,
+                path = "/test1/{name}",
+                responses(
+                    (status = 200, description = "test", body = String)
+                ),
+                params(
+                    ("name" = String, Path, description = "test name"),
+                )
+            )]
+        }
+        server.at("/test1/:name").get(|req: TideRequest| {
+            async move {
+                let name = req.param("name").unwrap();
+                println!("{}", name);
+
+                let mut resp = TideResponse::new(StatusCode::OK);
+                resp.set_content_type("application/text");
+                resp.set_body("test".as_bytes().to_owned());
+                Ok(resp)
+            }
+        });
+        #[cfg(feature = "openapi")]
+        add_openapi_item!(&mut server, test1);
+
+        #[cfg(feature = "openapi")]
+        def_openapi! {
+            [test2]
+            #[utoipa::path(
+                post,
+                path = "/test2",
+                responses(
+                    (status = 200, description = "test", body = inline(Test))
+                ),
+                params(
+                    ("a" = String, Query, description = "test a"),
+                    ("b" = u16, Query, description = "test b"),
+                ),
+                request_body = Test,
+            )]
+        }
+        server.at("/test2").post(|mut req: TideRequest| {
+            async move {
+                let t: Test = req.query().unwrap();
+                let t2: Test = req.body_json().await.unwrap();
+
+                let mut resp = TideResponse::new(StatusCode::OK);
+                resp.set_body(serde_json::to_string(&t).unwrap().as_bytes().to_owned());
+                resp.set_body(serde_json::to_string(&t2).unwrap().as_bytes().to_owned());
+                Ok(resp)
+            }
+        });
+        {
+            let server1 = &mut server;
+            #[cfg(feature = "openapi")]
+            add_openapi_item!(server1, test2);
+        }
+
+        server.at("/test3").serve_dir(".").unwrap();
+        println!("listening on 127.0.0.1:8081");
+
+
+        server.run().await.unwrap();
+        std::future::pending::<()>().await;
+        println!("listening on 127.0.0.1:8081 finish");
     }
 }

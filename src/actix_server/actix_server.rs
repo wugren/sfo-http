@@ -9,24 +9,22 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "openapi")]
 use utoipa::openapi::OpenApi;
 use crate::actix_server::{EndpointHandler, ActixRequest, ActixResponse};
-use crate::http_server::Response;
+use crate::actix_server::router::ActixRoute;
+use crate::http_server::{HttpServer, Response};
 #[cfg(feature = "openapi")]
 use crate::openapi::OpenApiServer;
 
-pub struct ActixHttpServer<
-    State: Clone + Send + Sync + 'static> {
+pub struct ActixHttpServer {
     server_addr: String,
     port: u16,
-    router_list: Vec<(Method, String, EndpointHandler<State>)>,
-    state: State,
+    router_list: Vec<(Method, String, EndpointHandler)>,
     #[cfg(feature = "openapi")]
     api_doc: Option<utoipa::openapi::OpenApi>,
     enable_api_doc: bool,
 }
 
 #[cfg(feature = "openapi")]
-impl<
-    State: Clone + Send + Sync + 'static> OpenApiServer for ActixHttpServer<State> {
+impl OpenApiServer for ActixHttpServer {
     fn set_api_doc(&mut self, api_doc: OpenApi) {
         self.api_doc = Some(api_doc);
     }
@@ -44,14 +42,12 @@ impl<
     }
 }
 
-impl<
-    State: 'static + Clone + Send + Sync> ActixHttpServer<State> {
-    pub fn new(state: State, server_addr: impl Into<String>, port: u16) -> Self {
+impl ActixHttpServer {
+    pub fn new(server_addr: impl Into<String>, port: u16) -> Self {
         Self {
             server_addr: server_addr.into(),
             port,
             router_list: vec![],
-            state,
             #[cfg(feature = "openapi")]
             api_doc: None,
             enable_api_doc: false,
@@ -121,10 +117,6 @@ impl<
         Ok(())
     }
 
-    pub fn at(self: &mut Self, path: &str) -> super::router::ActixRoute<State> {
-        super::router::ActixRoute::new(path.to_string(), self.state.clone(), &mut self.router_list)
-    }
-
     pub fn attach_to_actix_app<F>(&self, mut app: App<F>) -> App<F>
         where
             F: ServiceFactory<ServiceRequest, Config = (), Error = Error, InitError = ()> {
@@ -171,6 +163,12 @@ impl<
     }
 }
 
+impl<'a> HttpServer<'a, ActixRequest, ActixResponse, ActixRoute<'a>> for ActixHttpServer {
+    fn at(&'a mut self, path: &str) -> ActixRoute<'a> {
+        super::router::ActixRoute::new(path.to_string(), &mut self.router_list)
+    }
+}
+
 #[cfg(test)]
 mod test_actix {
     use actix_web::http::StatusCode;
@@ -187,7 +185,7 @@ mod test_actix {
     use crate::add_openapi_item;
     #[cfg(feature = "openapi")]
     use crate as sfo_http;
-    use crate::http_server::{Request, Response, Route};
+    use crate::http_server::{HttpServer, Request, Response, Route};
     #[cfg(feature = "openapi")]
     use crate::openapi::OpenApiServer;
 
@@ -212,7 +210,7 @@ mod test_actix {
 
     #[actix_web::test]
     async fn test() {
-        let mut server = ActixHttpServer::<>::new((), "127.0.0.1", 8080);
+        let mut server = ActixHttpServer::<>::new("127.0.0.1", 8080);
 
         #[cfg(feature = "openapi")]
         {
@@ -234,7 +232,7 @@ mod test_actix {
                 )
             )]
         }
-        server.at("/test1/{name}").get(|req: ActixRequest<()>| {
+        server.at("/test1/{name}").get(|req: ActixRequest| {
             async move {
                 let name = req.param("name").unwrap();
                 println!("{}", name);
@@ -263,7 +261,7 @@ mod test_actix {
                 request_body = Test,
             )]
         }
-        server.at("/test2").post(|mut req: ActixRequest<()>| {
+        server.at("/test2").post(|mut req: ActixRequest| {
             async move {
                 let t: Test = req.query().unwrap();
                 let t2: Test = req.body_json().await.unwrap();
@@ -284,6 +282,6 @@ mod test_actix {
         println!("listening on 127.0.0.1:8080");
 
 
-        // server.run().await.unwrap();
+        server.run().await.unwrap();
     }
 }
