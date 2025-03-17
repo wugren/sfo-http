@@ -17,7 +17,7 @@ use tide::Server;
 #[cfg(feature = "openapi")]
 use utoipa::openapi::{OpenApi, PathItem};
 use crate::errors::{ErrorCode, http_err, HttpResult, into_http_err};
-use crate::http_server::{Endpoint, HttpMethod, HttpServer, Request, Response};
+use crate::http_server::{Endpoint, HttpMethod, HttpServer, HttpServerConfig, Request, Response};
 #[cfg(feature = "openapi")]
 use crate::openapi::OpenApiServer;
 
@@ -247,29 +247,59 @@ impl OpenApiServer for TideHttpServer {
 }
 
 impl TideHttpServer {
-    pub fn new(server_addr: String, port: u16, allow_origin: Option<Vec<String>>, allow_headers: Option<String>, ) -> Self {
+    pub fn new(config: HttpServerConfig) -> Self {
         let mut app = tide::with_state(());
-
-        let mut cors = CorsMiddleware::new()
-            .allow_methods(
-                "GET, POST, PUT, DELETE, OPTIONS"
+        let mut cors = CorsMiddleware::new();
+        if !config.allow_methods.is_empty() {
+            if config.allow_methods.contains(&"*".to_string()) {
+                cors = cors.allow_methods("GET, POST, PUT, DELETE, OPTIONS"
                     .parse::<tide::http::headers::HeaderValue>()
-                    .unwrap(),
-            )
-            .allow_credentials(true);
-        if allow_origin.is_some() {
-            cors = cors.allow_origin(Origin::from(allow_origin.unwrap()));
+                    .unwrap());
+            } else {
+                cors = cors.allow_methods(config.allow_methods.join(", ")
+                    .parse::<tide::http::headers::HeaderValue>()
+                    .unwrap());
+            }
         }
-        if allow_headers.is_some() {
-            cors = cors.allow_headers(allow_headers.as_ref().unwrap().as_str().parse::<tide::http::headers::HeaderValue>().unwrap())
-                .expose_headers(allow_headers.as_ref().unwrap().as_str().parse::<tide::http::headers::HeaderValue>().unwrap());
+        if !config.allow_origins.is_empty() {
+            if config.allow_origins.contains(&"*".to_string()) {
+                cors = cors.allow_origin(Origin::from("*"));
+            } else {
+                cors = cors.allow_origin(Origin::from(config.allow_origins));
+            }
         }
+        if !config.allow_headers.is_empty() {
+            if config.allow_headers.contains(&"*".to_string()) {
+                cors = cors.allow_headers("*"
+                    .parse::<tide::http::headers::HeaderValue>()
+                    .unwrap());
+            } else {
+                cors = cors.allow_headers(config.allow_headers.join(", ")
+                    .parse::<tide::http::headers::HeaderValue>()
+                    .unwrap());
+            }
+        }
+        if !config.expose_headers.is_empty() {
+            if config.expose_headers.contains(&"*".to_string()) {
+                cors = cors.expose_headers("*"
+                    .parse::<tide::http::headers::HeaderValue>()
+                    .unwrap());
+            } else {
+                cors = cors.expose_headers(config.allow_headers.join(", ")
+                    .parse::<tide::http::headers::HeaderValue>()
+                    .unwrap());
+            }
+        }
+        if config.support_credentials {
+            cors = cors.allow_credentials(true);
+        }
+        cors = cors.max_age(config.max_age.to_string().parse::<tide::http::headers::HeaderValue>().unwrap());
         app.with(cors);
 
         Self {
             app,
-            server_addr,
-            port,
+            server_addr: config.server_addr,
+            port: config.port,
             #[cfg(feature = "openapi")]
             api_doc: None,
             enable_api_doc: true,
@@ -390,7 +420,7 @@ mod test_tide {
     use crate::add_openapi_item;
     #[cfg(feature = "openapi")]
     use crate as sfo_http;
-    use crate::http_server::{HttpMethod, HttpServer, Request, Response};
+    use crate::http_server::{HttpMethod, HttpServer, HttpServerConfig, Request, Response};
     #[cfg(feature = "openapi")]
     use crate::openapi::OpenApiServer;
     use crate::tide_server::{TideHttpServer, TideRequest, TideResponse};
@@ -416,7 +446,7 @@ mod test_tide {
 
     #[actix_web::test]
     async fn test() {
-        let mut server = TideHttpServer::<>::new("127.0.0.1".to_string(), 8081, None, None);
+        let mut server = TideHttpServer::<>::new(HttpServerConfig::new("127.0.0.1", 8081));
 
         #[cfg(feature = "openapi")]
         {

@@ -26,10 +26,10 @@ pub struct Payload<T> {
 }
 
 impl<T> Payload<T> {
-    pub fn is_expire(&self, interval: Duration) -> bool {
+    pub fn is_expire(&self) -> bool {
         if let Some(exp) = self.exp {
             let now = Utc::now().timestamp();
-            exp < now as u64 + interval.as_secs()
+            exp < now as u64
         } else {
             false
         }

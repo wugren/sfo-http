@@ -4,8 +4,17 @@ use std::path::Path;
 use http::{HeaderName, HeaderValue, StatusCode};
 use http::header::COOKIE;
 use serde::de::DeserializeOwned;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use crate::errors::HttpResult;
+
+
+#[derive(Serialize, Deserialize)]
+pub struct HttpServerResult<T>
+{
+    pub err: u16,
+    pub msg: String,
+    pub result: Option<T>
+}
 
 #[async_trait::async_trait(?Send)]
 pub trait Request: 'static {
@@ -86,4 +95,81 @@ pub trait HttpServer< Req: Request, Resp: Response> {
     fn serve(&mut self, path: &str, method: HttpMethod, ep: impl Endpoint<Req, Resp>);
     fn serve_dir(&mut self, path: &str, dir: impl AsRef<Path>) -> HttpResult<()>;
     fn serve_file(&mut self, path: &str, file: impl AsRef<Path>) -> HttpResult<()>;
+}
+
+#[derive(Debug, Clone)]
+pub struct HttpServerConfig {
+    pub(crate) server_addr: String,
+    pub(crate) port: u16,
+    pub(crate) allow_origins: Vec<String>,
+    pub(crate) allow_methods: Vec<String>,
+    pub(crate) allow_headers: Vec<String>,
+    pub(crate) expose_headers: Vec<String>,
+    pub(crate) max_age: usize,
+    pub(crate) support_credentials: bool,
+}
+
+impl HttpServerConfig {
+    pub fn new(server_addr: impl Into<String>, port: u16) -> Self {
+        Self {
+            server_addr: server_addr.into(),
+            port,
+            allow_origins: vec![],
+            allow_methods: vec![],
+            allow_headers: vec![],
+            expose_headers: vec![],
+            max_age: 3600,
+            support_credentials: false,
+        }
+    }
+
+    pub fn allow_origins(mut self, origin: Vec<String>) -> Self {
+        self.allow_origins = origin;
+        self
+    }
+
+    pub fn allow_any_origin(mut self) -> Self {
+        self.allow_origins = vec!["*".to_string()];
+        self
+    }
+
+    pub fn allow_methods(mut self, methods: Vec<String>) -> Self {
+        self.allow_methods = methods;
+        self
+    }
+
+    pub fn allow_any_methods(mut self) -> Self {
+        self.allow_methods = vec!["*".to_string()];
+        self
+    }
+
+    pub fn allow_headers(mut self, headers: Vec<String>) -> Self {
+        self.allow_headers = headers;
+        self
+    }
+
+    pub fn allow_any_header(mut self) -> Self {
+        self.allow_headers = vec!["*".to_string()];
+        self
+    }
+
+    pub fn expose_headers(mut self, headers: Vec<String>) -> Self {
+        self.expose_headers = headers;
+        self
+    }
+
+    pub fn expose_any_header(mut self) -> Self {
+        self.expose_headers = vec!["*".to_string()];
+        self
+    }
+
+    pub fn max_age(mut self, age: usize) -> Self {
+        self.max_age = age;
+        self
+    }
+
+    pub fn support_credentials(mut self, support: bool) -> Self {
+        self.support_credentials = support;
+        self
+    }
 }

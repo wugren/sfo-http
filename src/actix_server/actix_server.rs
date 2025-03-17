@@ -1,6 +1,7 @@
 use std::fmt::Debug;
 use std::future::Future;
 use std::path::Path;
+use std::str::FromStr;
 use std::sync::Arc;
 use actix_cors::Cors;
 use crate::errors::{ErrorCode, HttpResult, into_http_err};
@@ -11,19 +12,16 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "openapi")]
 use utoipa::openapi::OpenApi;
 use crate::actix_server::{EndpointHandler, ActixRequest, ActixResponse, ServeDir, ServeFile};
-use crate::http_server::{Endpoint, HttpMethod, HttpServer, Response};
+use crate::http_server::{Endpoint, HttpMethod, HttpServer, HttpServerConfig, Response};
 #[cfg(feature = "openapi")]
 use crate::openapi::OpenApiServer;
 
 pub struct ActixHttpServer {
-    server_addr: String,
-    port: u16,
+    config: HttpServerConfig,
     router_list: Vec<(Method, String, EndpointHandler)>,
     #[cfg(feature = "openapi")]
     api_doc: Option<utoipa::openapi::OpenApi>,
     enable_api_doc: bool,
-    allow_origin: Option<Vec<String>>,
-    allow_headers: Option<Vec<String>>,
 }
 
 #[cfg(feature = "openapi")]
@@ -46,39 +44,64 @@ impl OpenApiServer for ActixHttpServer {
 }
 
 impl ActixHttpServer {
-    pub fn new(server_addr: impl Into<String>, port: u16, allow_origin: Option<Vec<String>>, allow_headers: Option<Vec<String>>) -> Self {
+    pub fn new(config: HttpServerConfig) -> Self {
         Self {
-            server_addr: server_addr.into(),
-            port,
+            config,
             router_list: vec![],
             #[cfg(feature = "openapi")]
             api_doc: None,
             enable_api_doc: false,
-            allow_origin,
-            allow_headers,
         }
     }
 
     pub async fn run(mut self) -> HttpResult<()> {
-        let addr = format!("{}:{}", self.server_addr, self.port);
+        let server_addr = self.config.server_addr.clone();
+        let port = self.config.port;
+        let addr = format!("{}:{}", self.config.server_addr, self.config.port);
         ::log::info!("start http server:{}", addr);
         let router_list = self.router_list;
         #[cfg(feature = "openapi")]
         let api_doc = self.api_doc.clone();
-        let allow_origin = self.allow_origin.take();
-        let allow_headers = self.allow_headers.take();
+        let config = self.config.clone();
         actix_web::HttpServer::new(move || {
             let mut cors = Cors::default().allow_any_method();
-            if allow_origin.is_some() {
-                for origin in allow_origin.as_ref().unwrap() {
-                    cors = cors.allowed_origin(origin);
+            if !config.allow_origins.is_empty() {
+                for origin in config.allow_origins.iter() {
+                    if origin == "*" {
+                        cors = cors.send_wildcard().allow_any_origin();
+                        break;
+                    } else {
+                        cors = cors.allowed_origin(origin);
+                    }
                 }
             }
-            if allow_headers.is_some() {
-                cors = cors.allowed_headers(allow_headers.as_ref().unwrap());
-                cors = cors.expose_headers(allow_headers.as_ref().unwrap());
+            if !config.allow_methods.is_empty() {
+                if config.allow_methods.contains(&"*".to_string()) {
+                    cors = cors.allow_any_method();
+                } else {
+                    cors = cors.allowed_methods(config.allow_methods.iter().map(|v| Method::from_str(v).unwrap()).collect::<Vec<Method>>());
+                }
             }
-            cors = cors.supports_credentials();
+            if !config.allow_headers.is_empty() {
+                if config.allow_headers.contains(&"*".to_string()) {
+                    cors = cors.allow_any_header().send_wildcard();
+                } else {
+                    cors = cors.allowed_headers(config.allow_headers.clone());
+                }
+            }
+
+            if !config.expose_headers.is_empty() {
+                if config.expose_headers.contains(&"*".to_string()) {
+                    cors = cors.expose_any_header();
+                } else {
+                    cors = cors.expose_headers(config.expose_headers.clone());
+                }
+            }
+            if config.support_credentials {
+                cors = cors.supports_credentials();
+            }
+            cors = cors.max_age(Some(config.max_age as usize));
+
             let mut app = actix_web::App::new().wrap(cors);
             for (method, path, handler) in router_list.iter() {
                 let handler = handler.clone();
@@ -127,7 +150,7 @@ impl ActixHttpServer {
                 }
             }
             app
-        }).bind((self.server_addr.as_str(), self.port))
+        }).bind((server_addr.as_str(), port))
             .map_err(into_http_err!(ErrorCode::ServerError, "failed to bind server"))?
             .run().await
             .map_err(into_http_err!(ErrorCode::ServerError, "failed to run server"))?;
@@ -229,7 +252,7 @@ mod test_actix {
     use crate::add_openapi_item;
     #[cfg(feature = "openapi")]
     use crate as sfo_http;
-    use crate::http_server::{HttpMethod, HttpServer, Request, Response};
+    use crate::http_server::{HttpMethod, HttpServer, HttpServerConfig, Request, Response};
     #[cfg(feature = "openapi")]
     use crate::openapi::OpenApiServer;
 
@@ -254,7 +277,8 @@ mod test_actix {
 
     #[actix_web::test]
     async fn test() {
-        let mut server = ActixHttpServer::<>::new("127.0.0.1", 8080, None, None);
+
+        let mut server = ActixHttpServer::new(HttpServerConfig::new("127.0.0.1", 8080));
 
         #[cfg(feature = "openapi")]
         {

@@ -256,11 +256,11 @@ impl Response for ActixResponse {
     }
 
     fn insert_header(&mut self, name: HeaderName, value: HeaderValue) {
-        self.resp.as_mut().unwrap().headers_mut().insert(name, value);
+        self.resp.as_mut().unwrap().headers_mut().append(name, value);
     }
 
     fn set_content_type(&mut self, content_type: &str) -> HttpResult<()> {
-        self.insert_header(HeaderName::from_static("Content-Type"), HeaderValue::from_str(content_type)
+        self.insert_header(HeaderName::from_static("content-type"), HeaderValue::from_str(content_type)
             .map_err(into_http_err!(ErrorCode::InvalidParam, "invalid content type"))?);
         Ok(())
     }
