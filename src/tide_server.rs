@@ -4,9 +4,12 @@ use std::ops::{Deref, DerefMut};
 use std::path::Path;
 use std::pin::Pin;
 use std::slice::Iter;
-use std::sync::Arc;
+use std::str::FromStr;
+use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
+use async_std::io::Cursor;
 use http::header::COOKIE;
+use http::Method;
 use serde::{Deserialize, Serialize};
 use serde::de::DeserializeOwned;
 use serde_json::json;
@@ -14,6 +17,7 @@ use serde_json::ser::State;
 use tide::security::{CorsMiddleware, Origin};
 use tide::http::Mime;
 use tide::Server;
+use tokio::io::{AsyncRead, ReadBuf};
 #[cfg(feature = "openapi")]
 use utoipa::openapi::{OpenApi, PathItem};
 use crate::errors::{ErrorCode, http_err, HttpResult, into_http_err};
@@ -33,7 +37,7 @@ impl TideRequest {
     }
 }
 
-#[async_trait::async_trait(?Send)]
+#[async_trait::async_trait]
 impl crate::http_server::Request for TideRequest {
     fn peer_addr(&self) -> Option<String> {
         self.req.peer_addr().map(ToString::to_string)
@@ -49,6 +53,27 @@ impl crate::http_server::Request for TideRequest {
 
     fn host(&self) -> Option<String> {
         self.req.host().map(ToString::to_string)
+    }
+
+    fn path(&self) -> &str {
+        self.req.url().path()
+    }
+
+    fn method(&self) -> Method {
+        match self.req.method() {
+            tide::http::Method::Get => Method::GET,
+            tide::http::Method::Post => Method::POST,
+            tide::http::Method::Put => Method::PUT,
+            tide::http::Method::Delete => Method::DELETE,
+            tide::http::Method::Head => Method::HEAD,
+            tide::http::Method::Patch => Method::PATCH,
+            tide::http::Method::Options => Method::OPTIONS,
+            tide::http::Method::Trace => Method::TRACE,
+            tide::http::Method::Connect => Method::CONNECT,
+            value => {
+                Method::from_str(value.to_string().as_str()).unwrap_or(Method::TRACE)
+            }
+        }
     }
 
     fn content_type(&self) -> Option<String> {
@@ -167,6 +192,40 @@ impl crate::http_server::Response for TideResponse {
 
     fn set_body(&mut self, body: Vec<u8>) {
         self.resp.set_body(body);
+    }
+
+    fn set_body_read<R: AsyncRead + Send + 'static + Unpin>(&mut self, reader: R) {
+
+        self.resp.set_body(tide::Body::from_reader(async_std::io::BufReader::new(Reader::new(reader)), None));
+    }
+}
+
+pub struct Reader<R: AsyncRead + Unpin> {
+    reader: Arc<Mutex<R>>
+}
+
+
+
+impl<R: AsyncRead + Unpin> Reader<R> {
+    pub fn new(reader: R) -> Self {
+        Self {
+            reader: Arc::new(Mutex::new(reader))
+        }
+    }
+}
+
+impl<R: AsyncRead + Unpin> futures_io::AsyncRead for Reader<R> {
+    fn poll_read(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<std::io::Result<usize>> {
+        let mut buf = ReadBuf::new(buf);
+        let mut reader = self.reader.lock().unwrap();
+        match Pin::new(reader.deref_mut()).poll_read(cx, &mut buf) {
+            Poll::Ready(Ok(())) => {
+                let bytes = buf.filled();
+                Poll::Ready(Ok(bytes.len()))
+            }
+            Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
+            Poll::Pending => Poll::Pending,
+        }
     }
 }
 
@@ -393,6 +452,37 @@ impl HttpServer<TideRequest, TideResponse> for TideHttpServer {
                     TideEndpoint::new(ep, req)
                 });
             }
+            HttpMethod::PATCH => {
+                self.app.at(path).patch(move |req| {
+                    let ep = ep.clone();
+                    let req = TideRequest::new(req);
+                    TideEndpoint::new(ep, req)
+                });
+            }
+            HttpMethod::OPTIONS => {
+                self.app.at(path).options(move |req| {
+                    let ep = ep.clone();
+                    let req = TideRequest::new(req);
+                    TideEndpoint::new(ep, req)
+                });
+            }
+            HttpMethod::HEAD => {
+                self.app.at(path).head(move |req| {
+                    let ep = ep.clone();
+                    let req = TideRequest::new(req);
+                    TideEndpoint::new(ep, req)
+                });
+            }
+            HttpMethod::CONNECT => {
+                self.app.at(path).connect(move |req| {
+                    let ep = ep.clone();
+                    let req = TideRequest::new(req);
+                    TideEndpoint::new(ep, req)
+                });
+            }
+            _ => {
+                panic!("unsupported http method")
+            }
         }
 
     }
@@ -406,7 +496,7 @@ impl HttpServer<TideRequest, TideResponse> for TideHttpServer {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "client"))]
 mod test_tide {
     use http::StatusCode;
     use serde::{Deserialize, Serialize};
@@ -421,6 +511,7 @@ mod test_tide {
     #[cfg(feature = "openapi")]
     use crate as sfo_http;
     use crate::http_server::{HttpMethod, HttpServer, HttpServerConfig, Request, Response};
+    use crate::http_util::HttpClientBuilder;
     #[cfg(feature = "openapi")]
     use crate::openapi::OpenApiServer;
     use crate::tide_server::{TideHttpServer, TideRequest, TideResponse};
@@ -475,7 +566,7 @@ mod test_tide {
 
                 let mut resp = TideResponse::new(StatusCode::OK);
                 resp.set_content_type("application/text");
-                resp.set_body("test".as_bytes().to_owned());
+                resp.set_body(name.as_bytes().to_owned());
                 Ok(resp)
             }
         });
@@ -518,9 +609,30 @@ mod test_tide {
         server.serve_dir("/test3", ".").unwrap();
         println!("listening on 127.0.0.1:8081");
 
+        let handle = tokio::spawn(async move {
+            server.run().await.unwrap();
+        });
 
-        server.run().await.unwrap();
-        std::future::pending::<()>().await;
+        let client = HttpClientBuilder::default().set_base_url("http://127.0.0.1:8081").build();
+        let params = Test {
+            a: "test".to_string(),
+            b: 1,
+        };
+        let resp = client.post(format!("/test2?{}", serde_urlencoded::to_string(&params).unwrap()).as_str(), serde_json::to_vec(&params).unwrap(), Some("application/json")).await;
+        assert!(resp.is_ok());
+        let resp = serde_json::from_slice::<Test>(&resp.unwrap().0).unwrap();
+        assert_eq!(resp.a, "test");
+        assert_eq!(resp.b, 1);
+
+        let resp = client.get("/test1/test").await;
+        assert!(resp.is_ok());
+        assert_eq!(resp.unwrap().0, "test".as_bytes());
+
+        let resp = client.get("/test3/Cargo.toml").await;
+        assert!(resp.is_ok());
+        assert_eq!(resp.unwrap().0, include_bytes!("../Cargo.toml"));
+
+        handle.abort();
         println!("listening on 127.0.0.1:8081 finish");
     }
 }

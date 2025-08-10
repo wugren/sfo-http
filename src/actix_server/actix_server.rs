@@ -219,6 +219,12 @@ impl HttpServer<ActixRequest, ActixResponse> for ActixHttpServer {
             HttpMethod::POST => Method::POST,
             HttpMethod::PUT => Method::PUT,
             HttpMethod::DELETE => Method::DELETE,
+            HttpMethod::PATCH => Method::PATCH,
+            HttpMethod::OPTIONS => Method::OPTIONS,
+            HttpMethod::HEAD => Method::HEAD,
+            HttpMethod::TRACE => Method::TRACE,
+            HttpMethod::CONNECT => Method::CONNECT,
+            _ => panic!("unsupported method"),
         };
         self.router_list.push((method, path.to_string(), EndpointHandler::new(ep)));
     }
@@ -236,11 +242,12 @@ impl HttpServer<ActixRequest, ActixResponse> for ActixHttpServer {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "client"))]
 mod test_actix {
     use actix_web::http::StatusCode;
     use actix_web::body::BoxBody;
     use serde::{Deserialize, Serialize};
+    use tokio::runtime::Handle;
     use crate::actix_server::{ActixHttpServer, ActixRequest, ActixResponse};
     #[cfg(feature = "openapi")]
     use utoipa::ToSchema;
@@ -253,6 +260,7 @@ mod test_actix {
     #[cfg(feature = "openapi")]
     use crate as sfo_http;
     use crate::http_server::{HttpMethod, HttpServer, HttpServerConfig, Request, Response};
+    use crate::http_util::HttpClientBuilder;
     #[cfg(feature = "openapi")]
     use crate::openapi::OpenApiServer;
 
@@ -277,17 +285,17 @@ mod test_actix {
 
     #[actix_web::test]
     async fn test() {
+        let handle = std::thread::spawn(|| {
+            let mut server = ActixHttpServer::new(HttpServerConfig::new("127.0.0.1", 8080));
 
-        let mut server = ActixHttpServer::new(HttpServerConfig::new("127.0.0.1", 8080));
+            #[cfg(feature = "openapi")]
+            {
+                let openapi = ApiDoc::openapi();
+                server.set_api_doc(openapi);
+            }
 
-        #[cfg(feature = "openapi")]
-        {
-            let openapi = ApiDoc::openapi();
-            server.set_api_doc(openapi);
-        }
-
-        #[cfg(feature = "openapi")]
-        def_openapi! {
+            #[cfg(feature = "openapi")]
+            def_openapi! {
             [test1]
             #[utoipa::path(
                 get,
@@ -300,21 +308,21 @@ mod test_actix {
                 )
             )]
         }
-        server.serve("/test1/{name}", HttpMethod::GET,|req: ActixRequest| {
-            async move {
-                let name = req.param("name").unwrap();
-                println!("{}", name);
+            server.serve("/test1/{name}", HttpMethod::GET,|req: ActixRequest| {
+                async move {
+                    let name = req.param("name").unwrap();
+                    println!("{}", name);
 
-                let mut resp = ActixResponse::new(StatusCode::OK);
-                resp.set_body("test".as_bytes().to_owned());
-                Ok(resp)
-            }
-        });
-        #[cfg(feature = "openapi")]
-        add_openapi_item!(&mut server, test1);
+                    let mut resp = ActixResponse::new(StatusCode::OK);
+                    resp.set_body(name.as_bytes().to_owned());
+                    Ok(resp)
+                }
+            });
+            #[cfg(feature = "openapi")]
+            add_openapi_item!(&mut server, test1);
 
-        #[cfg(feature = "openapi")]
-        def_openapi! {
+            #[cfg(feature = "openapi")]
+            def_openapi! {
             [test2]
             #[utoipa::path(
                 post,
@@ -329,27 +337,53 @@ mod test_actix {
                 request_body = Test,
             )]
         }
-        server.serve("/test2", HttpMethod::POST,|mut req: ActixRequest| {
-            async move {
-                let t: Test = req.query().unwrap();
-                let t2: Test = req.body_json().await.unwrap();
+            server.serve("/test2", HttpMethod::POST,|mut req: ActixRequest| {
+                async move {
+                    let t: Test = req.query().unwrap();
+                    let t2: Test = req.body_json().await.unwrap();
 
-                let mut resp = ActixResponse::new(StatusCode::OK);
-                resp.set_body(serde_json::to_string(&t).unwrap().as_bytes().to_owned());
-                resp.set_body(serde_json::to_string(&t2).unwrap().as_bytes().to_owned());
-                Ok(resp)
+                    let mut resp = ActixResponse::new(StatusCode::OK);
+                    resp.set_body(serde_json::to_string(&t).unwrap().as_bytes().to_owned());
+                    resp.set_body(serde_json::to_string(&t2).unwrap().as_bytes().to_owned());
+                    Ok(resp)
+                }
+            });
+            {
+                let server1 = &mut server;
+                #[cfg(feature = "openapi")]
+                add_openapi_item!(server1, test2);
             }
+
+            server.serve_dir("/test3", ".").unwrap();
+            println!("listening on 127.0.0.1:8080");
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            let server = rt.block_on(async move {
+                server.run().await
+            });
+
         });
-        {
-            let server1 = &mut server;
-            #[cfg(feature = "openapi")]
-            add_openapi_item!(server1, test2);
-        }
+        let client = HttpClientBuilder::default().set_base_url("http://127.0.0.1:8081").build();
+        let params = Test {
+            a: "test".to_string(),
+            b: 1,
+        };
+        let resp = client.post(format!("/test2?{}", serde_urlencoded::to_string(&params).unwrap()).as_str(), serde_json::to_vec(&params).unwrap(), Some("application/json")).await;
+        assert!(resp.is_ok());
+        let resp = serde_json::from_slice::<Test>(&resp.unwrap().0).unwrap();
+        assert_eq!(resp.a, "test");
+        assert_eq!(resp.b, 1);
 
-        server.serve_dir("/test3", ".").unwrap();
-        println!("listening on 127.0.0.1:8080");
+        let resp = client.get("/test1/test").await;
+        assert!(resp.is_ok());
+        assert_eq!(resp.unwrap().0, "test".as_bytes());
 
+        let resp = client.get("/test3/Cargo.toml").await;
+        assert!(resp.is_ok());
+        assert_eq!(resp.unwrap().0, include_bytes!("../../Cargo.toml"));
 
-        server.run().await.unwrap();
+        println!("listening on 127.0.0.1:8080 finish");
     }
 }

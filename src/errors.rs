@@ -11,6 +11,7 @@ pub enum ErrorCode {
     ServerError,
     NotFound,
     IOError,
+    BadRequest,
 }
 pub type HttpError = sfo_result::Error<ErrorCode>;
 pub type HttpResult<T> = sfo_result::Result<T, ErrorCode>;
